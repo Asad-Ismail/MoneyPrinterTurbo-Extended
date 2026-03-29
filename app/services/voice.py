@@ -47,6 +47,12 @@ chatterbox_model = None
 whisperx_model = None
 
 
+def _ensure_parent_dir(file_path: str):
+    parent_dir = os.path.dirname(file_path)
+    if parent_dir and not os.path.exists(parent_dir):
+        os.makedirs(parent_dir, exist_ok=True)
+
+
 def ensure_submaker_compatibility(sub_maker):
     """Ensure SubMaker has required attributes for compatibility with different edge_tts versions"""
     if not hasattr(sub_maker, 'subs'):
@@ -1197,6 +1203,7 @@ def azure_tts_v1(
     voice_name = parse_voice_name(voice_name)
     text = text.strip()
     rate_str = convert_rate_to_percent(voice_rate)
+    _ensure_parent_dir(voice_file)
     for i in range(3):
         try:
             logger.info(f"start, voice name: {voice_name}, try: {i + 1}")
@@ -1248,6 +1255,7 @@ def siliconflow_tts(
         SubMaker对象或None
     """
     text = text.strip()
+    _ensure_parent_dir(voice_file)
     api_key = config.siliconflow.get("api_key", "")
 
     if not api_key:
@@ -1975,6 +1983,7 @@ def azure_tts_v2(text: str, voice_name: str, voice_file: str) -> Union[SubMaker,
         logger.error(f"invalid voice name: {voice_name}")
         raise ValueError(f"invalid voice name: {voice_name}")
     text = text.strip()
+    _ensure_parent_dir(voice_file)
 
     def _format_duration_to_offset(duration) -> int:
         if isinstance(duration, str):
@@ -2279,6 +2288,21 @@ def get_audio_duration(sub_maker: SubMaker):
     if not sub_maker.offset:
         return 0.0
     return sub_maker.offset[-1][1] / 10000000
+
+
+def get_audio_duration_from_file(audio_file: str) -> float:
+    if not os.path.exists(audio_file):
+        return 0.0
+    try:
+        from moviepy import AudioFileClip
+
+        clip = AudioFileClip(audio_file)
+        duration = clip.duration or 0.0
+        clip.close()
+        return duration
+    except Exception as e:
+        logger.warning(f"failed to read audio duration from file: {e}")
+        return 0.0
 
 
 # Note: This module contains TTS functions for Azure TTS V1/V2, SiliconFlow TTS, and Chatterbox TTS

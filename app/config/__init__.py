@@ -10,6 +10,11 @@ from app.utils import utils
 def __init_logger():
     # _log_file = utils.storage_dir("logs/server.log")
     _lvl = config.log_level
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     root_dir = os.path.dirname(
         os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
     )

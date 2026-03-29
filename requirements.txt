@@ -1,3 +1,4 @@
+# CPU-first install. GPU users should additionally install requirements-cuda.txt
 moviepy==2.1.2
 streamlit==1.45.0
 edge_tts==6.1.19

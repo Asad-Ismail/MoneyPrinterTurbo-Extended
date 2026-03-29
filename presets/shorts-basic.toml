@@ -1,0 +1,25 @@
+label = "Shorts Basic"
+video_type = "shorts"
+visible_sections = ["project", "llm", "performance", "style"]
+
+[default_config.project]
+preset_id = "shorts-basic"
+video_aspect = "9:16"
+
+[default_config.performance]
+run_mode = "fast-preview"
+compute_profile = "cpu-safe"
+asset_policy = "minimal"
+preview_resolution = "720x1280"
+preview_fps = 24
+max_concurrent_tasks = 1
+
+[default_config.style]
+subtitle_density = "short"
+audio_mix_profile = "speech-first"
+font_size = 66
+max_chars_per_line = 24
+
+[default_config.quality]
+max_subtitle_chars_per_line = 24
+max_subtitle_lines = 2

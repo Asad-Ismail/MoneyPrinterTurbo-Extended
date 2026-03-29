@@ -1,3 +1,59 @@
+[project]
+# Recommended entrypoint configuration for daily use
+preset_id = "youtube-explainer"
+profile_name = "default"
+video_source = "pexels"
+video_aspect = "16:9"
+
+[llm]
+# Unified LLM runtime config. Legacy provider-specific keys below are still supported.
+provider = "openai"
+model = "gpt-4o-mini"
+base_url = ""
+api_key_env = ""
+timeout_sec = 60
+retry_count = 5
+
+[pipeline]
+subtitle_provider = "edge"
+resume_from = "auto"
+cache_enabled = true
+reuse_intermediate = true
+material_directory = ""
+
+[performance]
+run_mode = "stable"      # stable | fast-preview | final
+compute_profile = "cpu-safe"  # cpu-safe | gpu-standard
+asset_policy = "balanced"     # minimal | balanced | rich
+preview_enabled = true
+preview_resolution = "720x1280"
+preview_fps = 24
+max_concurrent_tasks = 2
+n_threads = 2
+verbose = false
+enable_chatterbox = false
+allow_voice_clone = false
+
+[style]
+tts_server = "azure-tts-v1"
+subtitle_density = "balanced"
+audio_mix_profile = "speech-first"
+font_name = "MicrosoftYaHeiBold.ttc"
+font_size = 60
+text_fore_color = "#FFFFFF"
+highlight_color = "#ff0000"
+max_chars_per_line = 40
+max_lines_per_subtitle = 2
+
+[quality]
+enable_checks = true
+max_audio_subtitle_delta_sec = 1.2
+max_subtitle_chars_per_line = 40
+max_subtitle_lines = 2
+max_material_duplication_rate = 0.35
+max_bgm_to_voice_ratio = 0.35
+ng_words = ["guaranteed profit", "risk free", "絶対儲かる", "必ず勝てる", "元本保証"]
+
 [app]
 video_source = "pexels" # "pexels" or "pixabay"
 
@@ -20,6 +76,8 @@ pixabay_api_keys = []
 
 # 支持的提供商 (Supported providers):
 #   openai
+#   groq
+#   openrouter
 #   moonshot    (月之暗面)
 #   azure
 #   qwen        (通义千问)
@@ -54,6 +112,18 @@ openai_api_key = ""
 openai_base_url = ""
 # Check your available models at https://platform.openai.com/account/limits
 openai_model_name = "gpt-4o-mini"
+
+########## Groq API Key
+# Visit https://console.groq.com/keys to get your API key.
+groq_api_key = ""
+groq_base_url = "https://api.groq.com/openai/v1"
+groq_model_name = "llama-3.1-8b-instant"
+
+########## OpenRouter API Key
+# Visit https://openrouter.ai/keys to get your API key.
+openrouter_api_key = ""
+openrouter_base_url = "https://openrouter.ai/api/v1"
+openrouter_model_name = "openai/gpt-4o-mini"
 
 ########## Moonshot API Key
 # Visit https://platform.moonshot.cn/console/api-keys to get your API key.

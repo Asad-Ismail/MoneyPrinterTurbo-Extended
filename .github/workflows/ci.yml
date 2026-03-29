@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      PYTHONIOENCODING: utf-8
+      RUN_LIVE_TTS_TESTS: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run syntax check
+        run: |
+          python -m py_compile app/config/config.py app/services/llm.py app/services/quality.py app/services/task.py app/services/video.py app/services/voice.py app/models/schema.py webui/Main.py
+
+      - name: Run unit tests
+        run: |
+          python -m unittest

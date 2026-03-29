@@ -66,6 +66,8 @@ if "video_terms" not in st.session_state:
     st.session_state["video_terms"] = ""
 if "ui_language" not in st.session_state:
     st.session_state["ui_language"] = config.ui.get("language", system_locale)
+if "profile_name_input" not in st.session_state:
+    st.session_state["profile_name_input"] = config.project.get("profile_name", "default")
 
 # 加载语言文件
 locales = utils.load_locales(i18n_dir)
@@ -221,12 +223,98 @@ if not config.app.get("hide_config", False):
             )
             config.ui["hide_log"] = hide_log
 
+            preset_items = config.list_presets()
+            preset_labels = [f"{item['id']} - {item['label']}" for item in preset_items]
+            selected_preset_id = config.project.get("preset_id", "youtube-explainer")
+            selected_preset_index = next(
+                (i for i, item in enumerate(preset_items) if item["id"] == selected_preset_id),
+                0,
+            )
+            preset_label = st.selectbox(
+                "Preset",
+                options=preset_labels,
+                index=selected_preset_index,
+                key="preset_selector",
+            )
+            selected_preset_id = preset_label.split(" - ")[0]
+            config.project["preset_id"] = selected_preset_id
+
+            run_mode_options = ["stable", "fast-preview", "final"]
+            saved_run_mode = config.performance.get("run_mode", "stable")
+            config.performance["run_mode"] = st.selectbox(
+                "Run Mode",
+                options=run_mode_options,
+                index=run_mode_options.index(saved_run_mode) if saved_run_mode in run_mode_options else 0,
+            )
+
+            compute_options = ["cpu-safe", "gpu-standard"]
+            saved_compute_profile = config.performance.get("compute_profile", "cpu-safe")
+            config.performance["compute_profile"] = st.selectbox(
+                "Compute Profile",
+                options=compute_options,
+                index=compute_options.index(saved_compute_profile) if saved_compute_profile in compute_options else 0,
+            )
+            config.performance["enable_chatterbox"] = st.checkbox(
+                "Enable Chatterbox TTS",
+                value=config.performance.get("enable_chatterbox", False),
+                disabled=config.performance["compute_profile"] == "cpu-safe",
+            )
+            config.performance["allow_voice_clone"] = st.checkbox(
+                "Allow Voice Clone",
+                value=config.performance.get("allow_voice_clone", False),
+                disabled=config.performance["compute_profile"] == "cpu-safe" or not config.performance["enable_chatterbox"],
+            )
+
+            resume_options = ["auto", "script", "audio", "subtitle", "assets", "compose", "quality_check"]
+            saved_resume_from = config.pipeline.get("resume_from", "auto")
+            config.pipeline["resume_from"] = st.selectbox(
+                "Resume From",
+                options=resume_options,
+                index=resume_options.index(saved_resume_from) if saved_resume_from in resume_options else 0,
+            )
+            config.pipeline["cache_enabled"] = st.checkbox(
+                "Cache Intermediate Files",
+                value=config.pipeline.get("cache_enabled", True),
+            )
+            config.pipeline["reuse_intermediate"] = st.checkbox(
+                "Reuse Existing Stage Outputs",
+                value=config.pipeline.get("reuse_intermediate", True),
+            )
+
+            profile_names = config.list_profiles()
+            profile_name_input = st.text_input(
+                "Profile Name",
+                value=st.session_state.get("profile_name_input", config.project.get("profile_name", "default")),
+                key="profile_name_input_box",
+            ).strip()
+            st.session_state["profile_name_input"] = profile_name_input or "default"
+            selected_profile = st.selectbox(
+                "Saved Profiles",
+                options=[""] + profile_names,
+                index=0,
+                key="saved_profiles_selector",
+            )
+            profile_button_cols = st.columns(3)
+            if profile_button_cols[0].button("Apply Preset", use_container_width=True):
+                config.apply_preset(selected_preset_id)
+                st.rerun()
+            if profile_button_cols[1].button("Save Profile", use_container_width=True):
+                config.project["profile_name"] = st.session_state["profile_name_input"]
+                config.save_profile(st.session_state["profile_name_input"])
+                config.save_config()
+                st.success(f"Saved profile: {st.session_state['profile_name_input']}")
+            if profile_button_cols[2].button("Load Profile", use_container_width=True, disabled=not selected_profile):
+                config.apply_profile(selected_profile)
+                st.rerun()
+
         # 中间面板 - LLM 设置
 
         with middle_config_panel:
             st.write(tr("LLM Settings"))
             llm_providers = [
                 "OpenAI",
+                "Groq",
+                "OpenRouter",
                 "Moonshot",
                 "Azure",
                 "Qwen",
@@ -254,6 +342,7 @@ if not config.app.get("hide_config", False):
             llm_helper = st.container()
             llm_provider = llm_provider.lower()
             config.app["llm_provider"] = llm_provider
+            config.llm["provider"] = llm_provider
 
             llm_api_key = config.app.get(f"{llm_provider}_api_key", "")
             llm_secret_key = config.app.get(
@@ -290,6 +379,32 @@ if not config.app.get("hide_config", False):
                             - **API Key**: [点击到官网申请](https://platform.openai.com/api-keys)
                             - **Base Url**: 可以留空
                             - **Model Name**: 填写**有权限**的模型，[点击查看模型列表](https://platform.openai.com/settings/organization/limits)
+                            """
+
+            if llm_provider == "groq":
+                if not llm_model_name:
+                    llm_model_name = "llama-3.1-8b-instant"
+                if not llm_base_url:
+                    llm_base_url = "https://api.groq.com/openai/v1"
+                with llm_helper:
+                    tips = """
+                            ##### Groq 配置说明
+                            - **API Key**: [点击到官网申请](https://console.groq.com/keys)
+                            - **Base Url**: 固定为 https://api.groq.com/openai/v1
+                            - **Model Name**: 推荐使用速度优先模型，例如 llama-3.1-8b-instant
+                            """
+
+            if llm_provider == "openrouter":
+                if not llm_model_name:
+                    llm_model_name = "openai/gpt-4o-mini"
+                if not llm_base_url:
+                    llm_base_url = "https://openrouter.ai/api/v1"
+                with llm_helper:
+                    tips = """
+                            ##### OpenRouter 配置说明
+                            - **API Key**: [点击到官网申请](https://openrouter.ai/keys)
+                            - **Base Url**: 固定为 https://openrouter.ai/api/v1
+                            - **Model Name**: 例如 openai/gpt-4o-mini、anthropic/claude-3.5-sonnet
                             """
 
             if llm_provider == "moonshot":
@@ -421,6 +536,8 @@ if not config.app.get("hide_config", False):
                 config.app[f"{llm_provider}_base_url"] = st_llm_base_url
             if st_llm_model_name:
                 config.app[f"{llm_provider}_model_name"] = st_llm_model_name
+            config.llm["model"] = st_llm_model_name or llm_model_name
+            config.llm["base_url"] = st_llm_base_url or llm_base_url
             if llm_provider == "ernie":
                 st_llm_secret_key = st.text_input(
                     tr("Secret Key"), value=llm_secret_key, type="password"
@@ -850,8 +967,11 @@ with middle_panel:
             ("azure-tts-v1", "Azure TTS V1"),
             ("azure-tts-v2", "Azure TTS V2"),
             ("siliconflow", "SiliconFlow TTS"),
-            ("chatterbox", "Chatterbox TTS (Open Source)"),
         ]
+        if config.performance.get("enable_chatterbox", False) and config.performance.get("compute_profile") != "cpu-safe":
+            tts_servers.append(("chatterbox", "Chatterbox TTS (Open Source)"))
+        else:
+            st.info("CPU-safe では Chatterbox / 音声クローンを既定で無効化しています。必要なら Basic Settings から高負荷設定へ切り替えてください。")
 
         # 获取保存的TTS服务器，默认为v1
         saved_tts_server = config.ui.get("tts_server", "azure-tts-v1")
@@ -870,6 +990,7 @@ with middle_panel:
 
         selected_tts_server = tts_servers[selected_tts_server_index][0]
         config.ui["tts_server"] = selected_tts_server
+        config.style["tts_server"] = selected_tts_server
 
         # 根据选择的TTS服务器获取声音列表
         filtered_voices = []
@@ -880,6 +1001,8 @@ with middle_panel:
         elif selected_tts_server == "chatterbox":
             # 获取Chatterbox的声音列表
             filtered_voices = voice.get_chatterbox_voices()
+            if not config.performance.get("allow_voice_clone", False):
+                filtered_voices = [item for item in filtered_voices if ":default:" in item]
         else:
             # 获取Azure的声音列表
             all_voices = voice.get_all_azure_voices(filter_locals=None)
@@ -1202,8 +1325,26 @@ with right_panel:
             params.max_chars_per_line = config.ui.get("max_chars_per_line", 40)
             params.max_lines_per_subtitle = config.ui.get("max_lines_per_subtitle", 2)
 
+params.preset_id = config.project.get("preset_id", "youtube-explainer")
+params.profile_name = st.session_state.get("profile_name_input", config.project.get("profile_name", "default"))
+params.run_mode = config.performance.get("run_mode", "stable")
+params.compute_profile = config.performance.get("compute_profile", "cpu-safe")
+params.resume_from = config.pipeline.get("resume_from", "auto")
+params.cache_enabled = config.pipeline.get("cache_enabled", True)
+params.reuse_intermediate = config.pipeline.get("reuse_intermediate", True)
+params.asset_policy = config.performance.get("asset_policy", "balanced")
+params.n_threads = config.performance.get("n_threads", params.n_threads)
+
 start_button = st.button(tr("Generate Video"), use_container_width=True, type="primary")
 if start_button:
+    config.project["preset_id"] = params.preset_id
+    config.project["profile_name"] = params.profile_name
+    config.style["max_chars_per_line"] = params.max_chars_per_line
+    config.style["max_lines_per_subtitle"] = params.max_lines_per_subtitle
+    config.style["font_name"] = params.font_name
+    config.style["font_size"] = params.font_size
+    config.style["text_fore_color"] = params.text_fore_color
+    config.style["highlight_color"] = params.word_highlight_color
     config.save_config()
     task_id = str(uuid4())
     if not params.video_subject and not params.video_script:

@@ -29,6 +29,7 @@ text_zh = """
 
 voice_rate=1.0
 voice_volume=1.0
+RUN_LIVE_TTS_TESTS = os.getenv("RUN_LIVE_TTS_TESTS", "").lower() in {"1", "true", "yes"}
                     
 class TestVoiceService(unittest.TestCase):
     def setUp(self):
@@ -38,6 +39,7 @@ class TestVoiceService(unittest.TestCase):
     def tearDown(self):
         self.loop.close()
     
+    @unittest.skipUnless(RUN_LIVE_TTS_TESTS, "live TTS test requires external credentials/network")
     def test_siliconflow(self):
         voice_name = "siliconflow:FunAudioLLM/CosyVoice2-0.5B:alex-Male"
         voice_name = vs.parse_voice_name(voice_name)
@@ -67,6 +69,8 @@ class TestVoiceService(unittest.TestCase):
         self.loop.run_until_complete(_do())
     
     def test_azure_tts_v1(self):
+        if not RUN_LIVE_TTS_TESTS:
+            self.skipTest("live TTS test requires external network")
         voice_name = "zh-CN-XiaoyiNeural-Female"
         voice_name = vs.parse_voice_name(voice_name)
         print(voice_name)
@@ -83,6 +87,8 @@ class TestVoiceService(unittest.TestCase):
         print(f"voice: {voice_name}, audio duration: {audio_duration}s")
 
     def test_azure_tts_v2(self):
+        if not RUN_LIVE_TTS_TESTS:
+            self.skipTest("live TTS test requires external credentials")
         voice_name = "zh-CN-XiaoxiaoMultilingualNeural-V2-Female"
         voice_name = vs.parse_voice_name(voice_name)
         print(voice_name)

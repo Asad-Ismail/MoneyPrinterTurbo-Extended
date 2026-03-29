@@ -108,11 +108,15 @@ cd MoneyPrinterTurbo
 conda env create -f environment.yml
 conda activate MoneyPrinterTurbo
 
-# 2. Install Chatterbox TTS (voice cloning)
+# 2. CPU-only install (recommended for first run)
+pip install -r requirements.txt
+
+# 3. Optional: Install Chatterbox only when you want local TTS experimentation
 git clone https://github.com/resemble-ai/chatterbox.git
 cd chatterbox && pip install -e . && cd ..
 
-## For CUDA specific setup (if needed)
+## Optional: CUDA/GPU setup
+pip install -r requirements-cuda.txt
 source ./setup_cuda_env.sh    
 ```
 
@@ -128,6 +132,13 @@ export CHATTERBOX_CFG_WEIGHT=0.3  # Normal speed
 ```
 
 The web interface opens at `http://localhost:8501`
+
+## New Runtime Basics
+
+- Use a **preset** first: `shorts-basic`, `youtube-explainer`, `news-summary`
+- Save your current UI setup as a **profile** to reuse the same settings later
+- Default mode is `cpu-safe`, which keeps Chatterbox and voice cloning off unless you explicitly enable higher-load settings
+- LLM providers now support `OpenAI`, `Groq`, and `OpenRouter` through the same UI fields
 
 ## 🔧 Troubleshooting
 
