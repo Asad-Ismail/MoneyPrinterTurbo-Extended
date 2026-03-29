@@ -1,8 +1,10 @@
 import asyncio
+import base64
 import os
 import re
+import subprocess
 from datetime import datetime
-from typing import Union
+from typing import Optional, Union
 from xml.sax.saxutils import unescape
 
 # Suppress warnings and handle CUDA library conflicts
@@ -21,9 +23,14 @@ from edge_tts import SubMaker
 try:
     from edge_tts.submaker import mktimestamp
 except ImportError:
-    # Fallback for newer edge_tts versions
+    # edge_tts 7.x では mktimestamp が公開されないため、100ns 単位を SRT 時刻へ変換する
     def mktimestamp(offset):
-        return str(offset)
+        total_ms = max(int(round(offset / 10000)), 0)
+        hours = total_ms // 3600000
+        minutes = (total_ms % 3600000) // 60000
+        seconds = (total_ms % 60000) // 1000
+        millis = total_ms % 1000
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{millis:03d}"
 from loguru import logger
 from moviepy.video.tools import subtitles
 
@@ -45,6 +52,72 @@ except ImportError as e:
 # Global Chatterbox model instance
 chatterbox_model = None
 whisperx_model = None
+_last_tts_error = ""
+WINDOWS_SAPI_PREFIX = "windows:"
+
+
+def clear_last_tts_error():
+    global _last_tts_error
+    _last_tts_error = ""
+
+
+def get_last_tts_error() -> str:
+    return _last_tts_error
+
+
+def _set_last_tts_error(message: str):
+    global _last_tts_error
+    _last_tts_error = message.strip()
+
+
+def get_edge_tts_version() -> str:
+    return getattr(edge_tts, "__version__", "unknown")
+
+
+def is_edge_tts_outdated() -> bool:
+    version = get_edge_tts_version()
+    try:
+        major = int(version.split(".")[0])
+    except (TypeError, ValueError, AttributeError):
+        return False
+    return major < 7
+
+
+def _resolve_edge_tts_proxy() -> Optional[str]:
+    proxy_cfg = config.proxy
+    if isinstance(proxy_cfg, dict):
+        return proxy_cfg.get("https") or proxy_cfg.get("http") or None
+    if isinstance(proxy_cfg, str) and proxy_cfg.strip():
+        return proxy_cfg.strip()
+    return None
+
+
+def _build_edge_tts_error_message(error: Exception) -> str:
+    message = str(error).strip()
+    proxy = _resolve_edge_tts_proxy()
+    details = [f"Edge TTS に接続できませんでした: {message}"]
+    if "403" in message and "Invalid response status" in message:
+        if is_edge_tts_outdated():
+            details.append(
+                f"現在の edge_tts バージョンは {get_edge_tts_version()} です。古い版では接続拒否されることがあります。"
+            )
+            details.append("edge_tts を再インストールして最新版へ更新してください。")
+        else:
+            details.append(
+                f"現在の edge_tts バージョンは {get_edge_tts_version()} です。最新版でもネットワーク条件によって接続拒否されることがあります。"
+            )
+        if not proxy:
+            details.append("必要なら config.toml の [proxy] に https または http プロキシを設定してください。")
+        details.append("この環境では Edge の読み上げエンドポイント自体が拒否している可能性があります。")
+        if os.name == "nt":
+            details.append("Windows では内蔵音声へ自動フォールバックします。")
+    return " ".join(details)
+
+
+def _ensure_parent_dir(file_path: str):
+    parent_dir = os.path.dirname(file_path)
+    if parent_dir and not os.path.exists(parent_dir):
+        os.makedirs(parent_dir, exist_ok=True)
 
 
 def ensure_submaker_compatibility(sub_maker):
@@ -54,6 +127,20 @@ def ensure_submaker_compatibility(sub_maker):
     if not hasattr(sub_maker, 'offset'):
         sub_maker.offset = []
     return sub_maker
+
+
+def _append_submaker_timing(sub_maker, chunk: dict):
+    if chunk["type"] not in ("WordBoundary", "SentenceBoundary"):
+        return
+
+    if hasattr(sub_maker, "feed"):
+        try:
+            sub_maker.feed(chunk)
+        except Exception:
+            logger.debug("submaker feed fallback to legacy timing list")
+
+    sub_maker.subs.append(chunk["text"])
+    sub_maker.offset.append((chunk["offset"], chunk["offset"] + chunk["duration"]))
 
 
 def get_siliconflow_voices() -> list[str]:
@@ -106,6 +193,190 @@ def get_chatterbox_voices() -> list[str]:
                 voices.append(f"chatterbox:clone:{name}-Custom")
     
     return voices
+
+
+def is_windows_sapi_voice(voice_name: str) -> bool:
+    """Windows 内蔵音声の識別子かどうかを判定する"""
+    return voice_name.startswith(WINDOWS_SAPI_PREFIX)
+
+
+def _powershell_single_quote(value: str) -> str:
+    return value.replace("'", "''")
+
+
+def _run_powershell_script(script: str) -> subprocess.CompletedProcess:
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    return subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            encoded,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _locale_hint_from_voice_name(voice_name: str) -> str:
+    if is_windows_sapi_voice(voice_name):
+        return ""
+    match = re.match(r"^([a-z]{2}-[A-Z]{2})", parse_voice_name(voice_name))
+    return match.group(1) if match else ""
+
+
+def _windows_locale_keyword(locale_hint: str) -> str:
+    normalized = (locale_hint or "").lower()
+    if normalized.startswith("ja"):
+        return "Japanese"
+    if normalized.startswith("en"):
+        return "English"
+    if normalized.startswith("zh"):
+        return "Chinese"
+    if normalized.startswith("ko"):
+        return "Korean"
+    return ""
+
+
+def _build_approximate_submaker(text: str, audio_file: str) -> SubMaker:
+    """
+    Windows 内蔵音声は単語境界を返さないため、文章単位で概算タイムラインを作る。
+    """
+    cleaned_text = _format_text(text)
+    script_lines = utils.split_string_by_punctuations(cleaned_text)
+    if not script_lines:
+        script_lines = [cleaned_text.strip() or text.strip()]
+
+    total_duration = max(get_audio_duration_from_file(audio_file), 0.1)
+    total_offset = int(total_duration * 10000000)
+    weights = [max(len(re.sub(r"\s+", "", line)), 1) for line in script_lines]
+    total_weight = max(sum(weights), 1)
+
+    sub_maker = ensure_submaker_compatibility(SubMaker())
+    cursor = 0
+    for index, line in enumerate(script_lines):
+        if index == len(script_lines) - 1:
+            end_offset = total_offset
+        else:
+            span = max(int(total_offset * (weights[index] / total_weight)), 1)
+            end_offset = min(cursor + span, total_offset)
+        if end_offset <= cursor:
+            end_offset = cursor + 1
+        sub_maker.subs.append(line)
+        sub_maker.offset.append((cursor, end_offset))
+        cursor = end_offset
+    return sub_maker
+
+
+def get_windows_sapi_voices() -> list[str]:
+    """
+    Windows の SAPI 音声一覧を返す。
+    """
+    if os.name != "nt":
+        return []
+
+    script = """
+$ErrorActionPreference = 'Stop'
+$voice = New-Object -ComObject SAPI.SpVoice
+foreach ($item in @($voice.GetVoices())) {
+    $desc = $item.GetDescription()
+    if ($desc) {
+        Write-Output $desc
+    }
+}
+"""
+    result = _run_powershell_script(script)
+    if result.returncode != 0:
+        logger.warning(f"failed to list Windows voices: {result.stderr.strip() or result.stdout.strip()}")
+        return []
+
+    voices = []
+    for line in result.stdout.splitlines():
+        desc = line.strip()
+        if desc:
+            voices.append(f"{WINDOWS_SAPI_PREFIX}{desc}")
+    return voices
+
+
+def _should_fallback_to_windows_sapi(selected_tts_server: str) -> bool:
+    error = get_last_tts_error()
+    if os.name != "nt":
+        return False
+    if selected_tts_server not in ("", "azure-tts-v1"):
+        return False
+    return "403" in error and "Invalid response status" in error
+
+
+def windows_sapi_tts(
+    text: str, voice_name: str, voice_rate: float, voice_file: str
+) -> Union[SubMaker, None]:
+    """
+    Windows 標準の SAPI 音声で wav を生成する。
+    """
+    if os.name != "nt":
+        _set_last_tts_error("Windows 内蔵音声は Windows でのみ利用できます。")
+        return None
+
+    text = text.strip()
+    wav_file = os.path.splitext(voice_file)[0] + ".wav"
+    _ensure_parent_dir(wav_file)
+    exact_voice = ""
+    if is_windows_sapi_voice(voice_name):
+        exact_voice = voice_name[len(WINDOWS_SAPI_PREFIX) :]
+    locale_hint = _locale_hint_from_voice_name(voice_name)
+    locale_keyword = _windows_locale_keyword(locale_hint)
+    rate = max(min(round((voice_rate - 1.0) * 10), 10), -10)
+
+    script = f"""
+$ErrorActionPreference = 'Stop'
+$text = @'
+{text}
+'@
+$outFile = '{_powershell_single_quote(os.path.abspath(wav_file))}'
+$requestedVoice = '{_powershell_single_quote(exact_voice)}'
+$localeKeyword = '{_powershell_single_quote(locale_keyword)}'
+$voice = New-Object -ComObject SAPI.SpVoice
+$voices = @($voice.GetVoices())
+if ($voices.Count -eq 0) {{
+    throw 'Windows の音声が見つかりません。'
+}}
+$selected = $null
+if ($requestedVoice) {{
+    $selected = $voices | Where-Object {{ $_.GetDescription() -eq $requestedVoice }} | Select-Object -First 1
+}}
+if (-not $selected -and $localeKeyword) {{
+    $selected = $voices | Where-Object {{ $_.GetDescription() -like ('*' + $localeKeyword + '*') }} | Select-Object -First 1
+}}
+if (-not $selected) {{
+    $selected = $voices | Select-Object -First 1
+}}
+$voice.Voice = $selected
+$voice.Rate = {rate}
+$stream = New-Object -ComObject SAPI.SpFileStream
+$stream.Open($outFile, 3, $false)
+$voice.AudioOutputStream = $stream
+$null = $voice.Speak($text)
+$stream.Close()
+Write-Output ('VOICE=' + $selected.GetDescription())
+"""
+
+    result = _run_powershell_script(script)
+    if result.returncode != 0 or not os.path.exists(wav_file) or os.path.getsize(wav_file) == 0:
+        message = result.stderr.strip() or result.stdout.strip() or "Windows 内蔵音声での音声生成に失敗しました。"
+        _set_last_tts_error(f"Windows 内蔵音声での音声生成に失敗しました: {message}")
+        logger.error(get_last_tts_error())
+        return None
+
+    sub_maker = _build_approximate_submaker(text=text, audio_file=wav_file)
+    sub_maker._actual_audio_file = wav_file
+    clear_last_tts_error()
+    selected_voice_log = result.stdout.strip()
+    if selected_voice_log:
+        logger.info(f"Windows SAPI voice: {selected_voice_log}")
+    logger.info(f"completed with Windows SAPI, output file: {wav_file}")
+    return sub_maker
 
 
 def get_all_azure_voices(filter_locals=None) -> list[str]:
@@ -1155,6 +1426,14 @@ def tts(
     voice_file: str,
     voice_volume: float = 1.0,
 ) -> Union[SubMaker, None]:
+    clear_last_tts_error()
+    selected_tts_server = (
+        config.style.get("tts_server")
+        or config.ui.get("tts_server")
+        or "azure-tts-v1"
+    ).strip().lower()
+    if selected_tts_server == "windows-sapi" or is_windows_sapi_voice(voice_name):
+        return windows_sapi_tts(text, voice_name, voice_rate, voice_file)
     if is_azure_v2_voice(voice_name):
         return azure_tts_v2(text, voice_name, voice_file)
     elif is_siliconflow_voice(voice_name):
@@ -1178,7 +1457,17 @@ def tts(
         # Chatterbox TTS with WhisperX timestamps
         # 格式: chatterbox:type:name-Gender
         return chatterbox_tts(text, voice_name, voice_rate, voice_file, voice_volume)
-    return azure_tts_v1(text, voice_name, voice_rate, voice_file)
+    sub_maker = azure_tts_v1(text, voice_name, voice_rate, voice_file)
+    if sub_maker:
+        return sub_maker
+
+    if _should_fallback_to_windows_sapi(selected_tts_server):
+        logger.warning("azure-tts-v1 が 403 を返したため、Windows 内蔵音声へフォールバックします")
+        fallback_sub_maker = windows_sapi_tts(text, voice_name, voice_rate, voice_file)
+        if fallback_sub_maker:
+            return fallback_sub_maker
+
+    return None
 
 
 def convert_rate_to_percent(rate: float) -> str:
@@ -1197,20 +1486,25 @@ def azure_tts_v1(
     voice_name = parse_voice_name(voice_name)
     text = text.strip()
     rate_str = convert_rate_to_percent(voice_rate)
+    _ensure_parent_dir(voice_file)
+    proxy = _resolve_edge_tts_proxy()
+    last_error = ""
     for i in range(3):
         try:
             logger.info(f"start, voice name: {voice_name}, try: {i + 1}")
 
             async def _do() -> SubMaker:
-                communicate = edge_tts.Communicate(text, voice_name, rate=rate_str)
+                communicate_kwargs = {"rate": rate_str}
+                if proxy:
+                    communicate_kwargs["proxy"] = proxy
+                communicate = edge_tts.Communicate(text, voice_name, **communicate_kwargs)
                 sub_maker = ensure_submaker_compatibility(edge_tts.SubMaker())
                 with open(voice_file, "wb") as file:
                     async for chunk in communicate.stream():
                         if chunk["type"] == "audio":
                             file.write(chunk["data"])
-                        elif chunk["type"] == "WordBoundary":
-                            sub_maker.subs.append(chunk["text"])
-                            sub_maker.offset.append((chunk["offset"], chunk["offset"] + chunk["duration"]))
+                        elif chunk["type"] in ("WordBoundary", "SentenceBoundary"):
+                            _append_submaker_timing(sub_maker, chunk)
                 return sub_maker
 
             sub_maker = asyncio.run(_do())
@@ -1218,10 +1512,15 @@ def azure_tts_v1(
                 logger.warning("failed, sub_maker is None or sub_maker.subs is None")
                 continue
 
+            clear_last_tts_error()
             logger.info(f"completed, output file: {voice_file}")
             return sub_maker
         except Exception as e:
-            logger.error(f"failed, error: {str(e)}")
+            last_error = _build_edge_tts_error_message(e)
+            _set_last_tts_error(last_error)
+            logger.error(f"failed, error: {last_error}")
+    if last_error:
+        _set_last_tts_error(last_error)
     return None
 
 
@@ -1248,6 +1547,7 @@ def siliconflow_tts(
         SubMaker对象或None
     """
     text = text.strip()
+    _ensure_parent_dir(voice_file)
     api_key = config.siliconflow.get("api_key", "")
 
     if not api_key:
@@ -1975,6 +2275,7 @@ def azure_tts_v2(text: str, voice_name: str, voice_file: str) -> Union[SubMaker,
         logger.error(f"invalid voice name: {voice_name}")
         raise ValueError(f"invalid voice name: {voice_name}")
     text = text.strip()
+    _ensure_parent_dir(voice_file)
 
     def _format_duration_to_offset(duration) -> int:
         if isinstance(duration, str):
@@ -2267,6 +2568,16 @@ def create_subtitle(sub_maker: SubMaker, text: str, subtitle_file: str):
             logger.warning(
                 f"failed, sub_items len: {len(sub_items)}, script_lines len: {len(script_lines)}"
             )
+            fallback_srt = ""
+            if hasattr(sub_maker, "get_srt"):
+                try:
+                    fallback_srt = sub_maker.get_srt()
+                except Exception as fallback_error:
+                    logger.error(f"failed to build fallback srt: {fallback_error}")
+            if fallback_srt:
+                with open(subtitle_file, "w", encoding="utf-8") as file:
+                    file.write(fallback_srt)
+                logger.info(f"completed, subtitle file created with fallback srt: {subtitle_file}")
 
     except Exception as e:
         logger.error(f"failed, error: {str(e)}")
@@ -2279,6 +2590,21 @@ def get_audio_duration(sub_maker: SubMaker):
     if not sub_maker.offset:
         return 0.0
     return sub_maker.offset[-1][1] / 10000000
+
+
+def get_audio_duration_from_file(audio_file: str) -> float:
+    if not os.path.exists(audio_file):
+        return 0.0
+    try:
+        from moviepy import AudioFileClip
+
+        clip = AudioFileClip(audio_file)
+        duration = clip.duration or 0.0
+        clip.close()
+        return duration
+    except Exception as e:
+        logger.warning(f"failed to read audio duration from file: {e}")
+        return 0.0
 
 
 # Note: This module contains TTS functions for Azure TTS V1/V2, SiliconFlow TTS, and Chatterbox TTS

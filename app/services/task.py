@@ -1,4 +1,6 @@
+import json
 import math
+import os
 import os.path
 import re
 from os import path
@@ -8,13 +10,69 @@ from loguru import logger
 from app.config import config
 from app.models import const
 from app.models.schema import VideoConcatMode, VideoParams
-from app.services import llm, material, subtitle, video, voice
+from app.services import llm, material, quality, subtitle, video, voice
 from app.services import state as sm
 from app.utils import utils
 
 
+STAGE_ORDER = ["script", "audio", "subtitle", "assets", "compose", "quality_check"]
+
+
+def _artifact_dir(task_id: str) -> str:
+    return path.join(utils.task_dir(task_id), "artifacts")
+
+
+def _artifact_path(task_id: str, stage: str) -> str:
+    artifact_dir = _artifact_dir(task_id)
+    if not os.path.exists(artifact_dir):
+        os.makedirs(artifact_dir, exist_ok=True)
+    return path.join(artifact_dir, f"{stage}.json")
+
+
+def _save_stage_artifact(task_id: str, stage: str, status: str, metadata: dict | None = None):
+    with open(_artifact_path(task_id, stage), "w", encoding="utf-8") as f:
+        json.dump({"stage": stage, "status": status, "metadata": metadata or {}}, f, ensure_ascii=False, indent=2)
+
+
+def _load_stage_artifact(task_id: str, stage: str) -> dict:
+    artifact_path = _artifact_path(task_id, stage)
+    if not os.path.exists(artifact_path):
+        return {}
+    with open(artifact_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _should_resume_from(params: VideoParams, stage: str) -> bool:
+    if not getattr(params, "reuse_intermediate", False):
+        return False
+    resume_from = (getattr(params, "resume_from", "auto") or "auto").lower()
+    if resume_from == "auto":
+        return True
+    if resume_from not in STAGE_ORDER:
+        return False
+    return STAGE_ORDER.index(stage) < STAGE_ORDER.index(resume_from)
+
+
+def _load_script_bundle(task_id: str):
+    script_file = path.join(utils.task_dir(task_id), "script.json")
+    if not os.path.exists(script_file):
+        return None, None
+    with open(script_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return data.get("script"), data.get("search_terms")
+
+
+def _get_audio_duration_from_file(audio_file: str) -> int:
+    return math.ceil(voice.get_audio_duration_from_file(audio_file))
+
+
 def generate_script(task_id, params):
     logger.info("\n\n## generating video script")
+    if _should_resume_from(params, "script"):
+        cached_script, _ = _load_script_bundle(task_id)
+        if cached_script:
+            logger.info("reuse cached script from previous run")
+            return cached_script
     video_script = params.video_script.strip()
     if not video_script:
         video_script = llm.generate_script(
@@ -30,11 +88,17 @@ def generate_script(task_id, params):
         logger.error("failed to generate video script.")
         return None
 
+    _save_stage_artifact(task_id, "script", "completed", {"script_file": path.join(utils.task_dir(task_id), "script.json")})
     return video_script
 
 
 def generate_terms(task_id, params, video_script):
     logger.info("\n\n## generating video terms")
+    if _should_resume_from(params, "audio"):
+        _, cached_terms = _load_script_bundle(task_id)
+        if cached_terms:
+            logger.info("reuse cached search terms from previous run")
+            return cached_terms
     video_terms = params.video_terms
     if not video_terms:
         video_terms = llm.generate_terms(
@@ -68,11 +132,15 @@ def save_script_data(task_id, video_script, video_terms, params):
 
     with open(script_file, "w", encoding="utf-8") as f:
         f.write(utils.to_json(script_data))
+    _save_stage_artifact(task_id, "script", "completed", {"script_file": script_file, "search_terms": video_terms})
 
 
 def generate_audio(task_id, params, video_script):
     logger.info("\n\n## generating audio")
     audio_file = path.join(utils.task_dir(task_id), "audio.mp3")
+    if _should_resume_from(params, "audio") and os.path.exists(audio_file):
+        logger.info("reuse cached audio from previous run")
+        return audio_file, _get_audio_duration_from_file(audio_file), None
     sub_maker = voice.tts(
         text=video_script,
         voice_name=voice.parse_voice_name(params.voice_name),
@@ -81,11 +149,13 @@ def generate_audio(task_id, params, video_script):
     )
     if sub_maker is None:
         sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
+        tts_error = voice.get_last_tts_error()
+        error_detail = f"\n3. tts detail: {tts_error}" if tts_error else ""
         logger.error(
             """failed to generate audio:
 1. check if the language of the voice matches the language of the video script.
 2. check if the network is available. If you are in China, it is recommended to use a VPN and enable the global traffic mode.
-        """.strip()
+        """.strip() + error_detail
         )
         return None, None, None
 
@@ -96,6 +166,7 @@ def generate_audio(task_id, params, video_script):
         audio_file = actual_audio_file
 
     audio_duration = math.ceil(voice.get_audio_duration(sub_maker))
+    _save_stage_artifact(task_id, "audio", "completed", {"audio_file": audio_file, "audio_duration": audio_duration})
     return audio_file, audio_duration, sub_maker
 
 
@@ -104,6 +175,9 @@ def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
         return ""
 
     subtitle_path = path.join(utils.task_dir(task_id), "subtitle.srt")
+    if _should_resume_from(params, "subtitle") and os.path.exists(subtitle_path):
+        logger.info("reuse cached subtitle from previous run")
+        return subtitle_path
     subtitle_provider = config.app.get("subtitle_provider", "edge").strip().lower()
     logger.info(f"\n\n## generating subtitle, provider: {subtitle_provider}")
 
@@ -152,10 +226,17 @@ def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
         logger.warning(f"subtitle file is invalid: {subtitle_path}")
         return ""
 
+    _save_stage_artifact(task_id, "subtitle", "completed", {"subtitle_path": subtitle_path})
     return subtitle_path
 
 
 def get_video_materials(task_id, params, video_terms, audio_duration):
+    if _should_resume_from(params, "assets"):
+        artifact = _load_stage_artifact(task_id, "assets")
+        cached_materials = artifact.get("metadata", {}).get("materials", [])
+        if cached_materials and all(os.path.exists(item) or item.startswith("http") for item in cached_materials):
+            logger.info("reuse cached materials from previous run")
+            return cached_materials
     if params.video_source == "local":
         logger.info("\n\n## preprocess local materials")
         materials = video.preprocess_video(
@@ -167,7 +248,9 @@ def get_video_materials(task_id, params, video_terms, audio_duration):
                 "no valid materials found, please check the materials and try again."
             )
             return None
-        return [material_info.url for material_info in materials]
+        material_urls = [material_info.url for material_info in materials]
+        _save_stage_artifact(task_id, "assets", "completed", {"materials": material_urls})
+        return material_urls
     else:
         logger.info(f"\n\n## downloading videos from {params.video_source}")
         downloaded_videos = material.download_videos(
@@ -185,6 +268,7 @@ def get_video_materials(task_id, params, video_terms, audio_duration):
                 "failed to download videos, maybe the network is not available. if you are in China, please use a VPN."
             )
             return None
+        _save_stage_artifact(task_id, "assets", "completed", {"materials": downloaded_videos})
         return downloaded_videos
 
 
@@ -193,6 +277,14 @@ def generate_final_videos(
 ):
     final_video_paths = []
     combined_video_paths = []
+
+    if _should_resume_from(params, "compose"):
+        artifact = _load_stage_artifact(task_id, "compose")
+        cached_videos = artifact.get("metadata", {}).get("videos", [])
+        cached_combined = artifact.get("metadata", {}).get("combined_videos", [])
+        if cached_videos and all(path.exists(video_path) for video_path in cached_videos):
+            logger.info("reuse cached composed videos from previous run")
+            return cached_videos, cached_combined
     
     # Force random mode for multiple videos to ensure variety
     # Semantic mode would produce identical videos, which doesn't make sense for multiple generation
@@ -244,6 +336,12 @@ def generate_final_videos(
         final_video_paths.append(final_video_path)
         combined_video_paths.append(combined_video_path)
 
+    _save_stage_artifact(
+        task_id,
+        "compose",
+        "completed",
+        {"videos": final_video_paths, "combined_videos": combined_video_paths},
+    )
     return final_video_paths, combined_video_paths
 
 
@@ -253,6 +351,14 @@ def start(task_id, params: VideoParams, stop_at: str = "video"):
 
     if type(params.video_concat_mode) is str:
         params.video_concat_mode = VideoConcatMode(params.video_concat_mode)
+    if not getattr(params, "compute_profile", ""):
+        params.compute_profile = config.performance.get("compute_profile", "cpu-safe")
+    if not getattr(params, "run_mode", ""):
+        params.run_mode = config.performance.get("run_mode", "stable")
+    if not getattr(params, "resume_from", ""):
+        params.resume_from = config.pipeline.get("resume_from", "auto")
+    if getattr(params, "n_threads", None) is None:
+        params.n_threads = config.performance.get("n_threads", 2)
 
     # 1. Generate script
     video_script = generate_script(task_id, params)
@@ -352,6 +458,15 @@ def start(task_id, params: VideoParams, stop_at: str = "video"):
     logger.success(
         f"task {task_id} finished, generated {len(final_video_paths)} videos."
     )
+    quality_report = quality.run_quality_checks(
+        task_id=task_id,
+        params=params,
+        audio_duration=audio_duration,
+        subtitle_path=subtitle_path,
+        materials=downloaded_videos,
+        video_script=video_script,
+    )
+    _save_stage_artifact(task_id, "quality_check", "completed", quality_report)
 
     kwargs = {
         "videos": final_video_paths,
@@ -362,7 +477,12 @@ def start(task_id, params: VideoParams, stop_at: str = "video"):
         "audio_duration": audio_duration,
         "subtitle_path": subtitle_path,
         "materials": downloaded_videos,
+        "quality_report": quality_report,
     }
+    if quality_report.get("blocking"):
+        sm.state.update_task(task_id, state=const.TASK_STATE_FAILED, progress=100, **kwargs)
+        logger.error("quality checks failed with blocking errors")
+        return kwargs
     sm.state.update_task(
         task_id, state=const.TASK_STATE_COMPLETE, progress=100, **kwargs
     )

@@ -29,10 +29,8 @@ class TestVideoService(unittest.TestCase):
         m = MaterialInfo()
         m.url = self.test_img_path
         m.provider = "local"
-        print(m)
         
         materials = vd.preprocess_video([m], clip_duration=4)
-        print(materials)
         
         # verify result
         self.assertIsNotNone(materials)
@@ -41,7 +39,8 @@ class TestVideoService(unittest.TestCase):
         
         # moviepy get video info
         clip = VideoFileClip(materials[0].url)
-        print(clip)
+        self.assertGreater(clip.duration, 0)
+        clip.close()
         
         # clean generated test video file
         if os.path.exists(materials[0].url):
@@ -63,7 +62,6 @@ class TestVideoService(unittest.TestCase):
                 font=font_path,
                 fontsize=30
             )
-            print(wrapped_text_en, text_height_en)
             # verify text is wrapped
             self.assertIn("\n", wrapped_text_en)
             
@@ -75,7 +73,6 @@ class TestVideoService(unittest.TestCase):
                 font=font_path,
                 fontsize=30
             )   
-            print(wrapped_text_zh, text_height_zh)
             # verify chinese text is wrapped
             self.assertIn("\n", wrapped_text_zh)
         except Exception as e:

@@ -1003,6 +1003,9 @@ def generate_video(
 
 
 def preprocess_video(materials: List[MaterialInfo], clip_duration=4):
+    def ensure_even(value: int) -> int:
+        return value if value % 2 == 0 else value - 1
+
     for material in materials:
         if not material.url:
             continue
@@ -1039,6 +1042,14 @@ def preprocess_video(materials: List[MaterialInfo], clip_duration=4):
             # Optionally, create a composite video clip containing the zoomed clip.
             # This is useful when you want to add other elements to the video.
             final_clip = CompositeVideoClip([zoom_clip])
+            final_width, final_height = final_clip.size
+            even_width = ensure_even(final_width)
+            even_height = ensure_even(final_height)
+            if even_width != final_width or even_height != final_height:
+                logger.info(
+                    f"adjust image clip to even size for ffmpeg: {final_width}x{final_height} -> {even_width}x{even_height}"
+                )
+                final_clip = final_clip.resized(new_size=(even_width, even_height))
 
             # Output the video to a file.
             video_file = f"{material.url}.mp4"

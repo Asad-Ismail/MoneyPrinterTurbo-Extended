@@ -74,6 +74,14 @@ class VideoParams(BaseModel):
     """
 
     video_subject: str
+    preset_id: Optional[str] = "youtube-explainer"
+    profile_name: Optional[str] = "default"
+    run_mode: Optional[str] = "stable"
+    compute_profile: Optional[str] = "cpu-safe"
+    resume_from: Optional[str] = "auto"
+    cache_enabled: Optional[bool] = True
+    reuse_intermediate: Optional[bool] = True
+    asset_policy: Optional[str] = "balanced"
     video_script: str = ""  # Script used to generate the video
     video_terms: Optional[str | list] = None  # Keywords used to generate the video
     video_aspect: Optional[VideoAspect] = VideoAspect.portrait.value

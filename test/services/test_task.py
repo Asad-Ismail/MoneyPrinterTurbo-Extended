@@ -58,8 +58,10 @@ class TestTaskService(unittest.TestCase):
             n_threads=2,
             paragraph_number=1
         )
-        result = tm.start(task_id=task_id, params=params)
-        print(result)
+        result = tm.start(task_id=task_id, params=params, stop_at="terms")
+        self.assertIsNotNone(result)
+        self.assertIn("script", result)
+        self.assertTrue(result["script"])
     
 
 if __name__ == "__main__":

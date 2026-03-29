@@ -1,0 +1,22 @@
+label = "News Summary"
+video_type = "news"
+visible_sections = ["project", "llm", "performance", "style", "quality"]
+
+[default_config.project]
+preset_id = "news-summary"
+video_aspect = "9:16"
+
+[default_config.performance]
+run_mode = "stable"
+compute_profile = "cpu-safe"
+asset_policy = "minimal"
+max_concurrent_tasks = 1
+
+[default_config.style]
+subtitle_density = "balanced"
+audio_mix_profile = "speech-first"
+font_size = 64
+max_chars_per_line = 30
+
+[default_config.quality]
+max_subtitle_chars_per_line = 30
