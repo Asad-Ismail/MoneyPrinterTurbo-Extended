@@ -12,6 +12,14 @@ config_file = f"{root_dir}/config.toml"
 
 DEFAULT_PROFILE_NAME = "default"
 DEFAULT_PRESET_ID = "youtube-explainer"
+DEFAULT_JAPANESE_UI_LANGUAGE = "ja"
+DEFAULT_JAPANESE_VIDEO_LANGUAGE = "ja-JP"
+DEFAULT_JAPANESE_VOICE_NAME = "ja-JP-NanamiNeural-Female"
+LEGACY_REPLACEABLE_VOICES = {"", "en-AU-NatashaNeural-Female"}
+
+
+def default_tts_server_for_platform() -> str:
+    return "windows-sapi" if os.name == "nt" else "azure-tts-v1"
 
 DEFAULT_GROUPED_CONFIG = {
     "project": {
@@ -19,6 +27,7 @@ DEFAULT_GROUPED_CONFIG = {
         "profile_name": DEFAULT_PROFILE_NAME,
         "video_source": "pexels",
         "video_aspect": "9:16",
+        "video_language": "",
     },
     "llm": {
         "provider": "openai",
@@ -49,7 +58,7 @@ DEFAULT_GROUPED_CONFIG = {
         "allow_voice_clone": False,
     },
     "style": {
-        "tts_server": "azure-tts-v1",
+        "tts_server": default_tts_server_for_platform(),
         "subtitle_density": "balanced",
         "audio_mix_profile": "speech-first",
         "font_name": "MicrosoftYaHeiBold.ttc",
@@ -160,6 +169,79 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any] | None) -> dict[st
     return base
 
 
+def is_japanese_language(language: str | None) -> bool:
+    normalized = (language or "").strip().lower().replace("_", "-")
+    return normalized == "ja" or normalized.startswith("ja-")
+
+
+def default_video_language_for_ui(ui_language: str | None) -> str:
+    if is_japanese_language(ui_language):
+        return DEFAULT_JAPANESE_VIDEO_LANGUAGE
+    return ""
+
+
+def default_voice_name_for_languages(
+    ui_language: str | None, video_language: str | None
+) -> str:
+    if is_japanese_language(video_language) or is_japanese_language(ui_language):
+        return DEFAULT_JAPANESE_VOICE_NAME
+    return ""
+
+
+def _apply_language_defaults(cfg: dict[str, Any], grouped: dict[str, Any]) -> None:
+    ui_cfg = cfg.setdefault("ui", {})
+    project_cfg = grouped.setdefault("project", {})
+    style_cfg = grouped.setdefault("style", {})
+    quality_cfg = grouped.setdefault("quality", {})
+
+    ui_language = ui_cfg.get("language", "")
+    video_language = project_cfg.get("video_language", "")
+    if not (is_japanese_language(ui_language) or is_japanese_language(video_language)):
+        return
+
+    project_cfg.setdefault("video_language", DEFAULT_JAPANESE_VIDEO_LANGUAGE)
+    if not project_cfg.get("video_language"):
+        project_cfg["video_language"] = DEFAULT_JAPANESE_VIDEO_LANGUAGE
+
+    current_voice = ui_cfg.get("voice_name", "").strip()
+    if current_voice in LEGACY_REPLACEABLE_VOICES:
+        ui_cfg["voice_name"] = DEFAULT_JAPANESE_VOICE_NAME
+
+    style_cfg["max_chars_per_line"] = min(style_cfg.get("max_chars_per_line", 40), 26)
+    quality_cfg["max_subtitle_chars_per_line"] = min(
+        quality_cfg.get("max_subtitle_chars_per_line", 40), 26
+    )
+
+
+def _apply_windows_tts_defaults(cfg: dict[str, Any], grouped: dict[str, Any]) -> None:
+    if os.name != "nt":
+        return
+
+    performance_cfg = grouped.setdefault("performance", {})
+    if performance_cfg.get("compute_profile", "cpu-safe") != "cpu-safe":
+        return
+
+    ui_cfg = cfg.setdefault("ui", {})
+    style_cfg = grouped.setdefault("style", {})
+    azure_cfg = cfg.setdefault("azure", {})
+
+    current_tts_server = (
+        style_cfg.get("tts_server")
+        or ui_cfg.get("tts_server")
+        or default_tts_server_for_platform()
+    ).strip().lower()
+
+    # Windows + CPU-safe の既定経路では Edge TTS V1 が不安定なため、
+    # 明示的な Azure Speech キー未設定時は内蔵音声へ寄せる。
+    if current_tts_server == "azure-tts-v2":
+        return
+    if azure_cfg.get("speech_key", "").strip() and azure_cfg.get("speech_region", "").strip():
+        return
+    if current_tts_server in ("", "azure-tts-v1"):
+        ui_cfg["tts_server"] = "windows-sapi"
+        style_cfg["tts_server"] = "windows-sapi"
+
+
 def _load_toml(path: str) -> dict[str, Any]:
     try:
         return toml.load(path)
@@ -250,7 +332,7 @@ def _legacy_defaults() -> dict[str, Any]:
         "ui": {
             "hide_log": False,
             "language": "en",
-            "tts_server": "azure-tts-v1",
+            "tts_server": default_tts_server_for_platform(),
             "voice_name": "",
             "font_name": "MicrosoftYaHeiBold.ttc",
             "text_fore_color": "#FFFFFF",
@@ -278,6 +360,7 @@ def _build_grouped_from_legacy(cfg: dict[str, Any]) -> dict[str, Any]:
     project_cfg.setdefault("profile_name", app_cfg.get("profile_name", DEFAULT_PROFILE_NAME))
     project_cfg.setdefault("video_source", app_cfg.get("video_source", "pexels"))
     project_cfg.setdefault("video_aspect", app_cfg.get("video_aspect", "9:16"))
+    project_cfg.setdefault("video_language", app_cfg.get("video_language", ""))
 
     provider = llm_cfg.get("provider") or app_cfg.get("llm_provider", "openai")
     llm_cfg.setdefault("provider", provider)
@@ -305,7 +388,7 @@ def _build_grouped_from_legacy(cfg: dict[str, Any]) -> dict[str, Any]:
     performance_cfg.setdefault("enable_chatterbox", ui_cfg.get("tts_server") == "chatterbox")
     performance_cfg.setdefault("allow_voice_clone", app_cfg.get("allow_voice_clone", False))
 
-    style_cfg.setdefault("tts_server", ui_cfg.get("tts_server", "azure-tts-v1"))
+    style_cfg.setdefault("tts_server", ui_cfg.get("tts_server", default_tts_server_for_platform()))
     style_cfg.setdefault("subtitle_density", app_cfg.get("subtitle_density", "balanced"))
     style_cfg.setdefault("audio_mix_profile", app_cfg.get("audio_mix_profile", "speech-first"))
     style_cfg.setdefault("font_name", ui_cfg.get("font_name", "MicrosoftYaHeiBold.ttc"))
@@ -344,6 +427,8 @@ def normalize_config_dict(cfg: dict[str, Any]) -> dict[str, Any]:
     preset = BUILTIN_PRESETS.get(preset_id, BUILTIN_PRESETS[DEFAULT_PRESET_ID])
     normalized_grouped = deep_merge(copy.deepcopy(DEFAULT_GROUPED_CONFIG), preset.get("default_config", {}))
     normalized_grouped = deep_merge(normalized_grouped, grouped)
+    _apply_language_defaults(merged, normalized_grouped)
+    _apply_windows_tts_defaults(merged, normalized_grouped)
 
     merged["project"] = normalized_grouped["project"]
     merged["llm"] = normalized_grouped["llm"]
@@ -371,6 +456,7 @@ def sync_legacy_sections(cfg: dict[str, Any]):
     app_cfg["video_source"] = project_cfg.get("video_source", "pexels")
     app_cfg["preset_id"] = project_cfg.get("preset_id", DEFAULT_PRESET_ID)
     app_cfg["profile_name"] = project_cfg.get("profile_name", DEFAULT_PROFILE_NAME)
+    app_cfg["video_language"] = project_cfg.get("video_language", "")
     app_cfg["llm_provider"] = provider
     app_cfg["run_mode"] = perf_cfg.get("run_mode", "stable")
     app_cfg["compute_profile"] = perf_cfg.get("compute_profile", "cpu-safe")
@@ -400,7 +486,7 @@ def sync_legacy_sections(cfg: dict[str, Any]):
     app_cfg[f"{provider}_base_url"] = llm_cfg.get("base_url", "")
     app_cfg[f"{provider}_model_name"] = llm_cfg.get("model", "")
 
-    ui_cfg["tts_server"] = style_cfg.get("tts_server", "azure-tts-v1")
+    ui_cfg["tts_server"] = style_cfg.get("tts_server", default_tts_server_for_platform())
     ui_cfg["font_name"] = style_cfg.get("font_name", "MicrosoftYaHeiBold.ttc")
     ui_cfg["font_size"] = style_cfg.get("font_size", 60)
     ui_cfg["text_fore_color"] = style_cfg.get("text_fore_color", "#FFFFFF")
@@ -412,7 +498,7 @@ def sync_legacy_sections(cfg: dict[str, Any]):
         whisper_cfg["device"] = "CPU"
         whisper_cfg["compute_type"] = "int8"
         if ui_cfg.get("tts_server") == "chatterbox":
-            ui_cfg["tts_server"] = "azure-tts-v1"
+            ui_cfg["tts_server"] = default_tts_server_for_platform()
     else:
         whisper_cfg.setdefault("device", "cuda")
         whisper_cfg.setdefault("compute_type", "float16")

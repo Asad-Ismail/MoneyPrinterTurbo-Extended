@@ -99,39 +99,68 @@ REQUIRED DELIVERABLES:
 
 ##  Installation
 
-**Quick Start (Recommended):**
+**Quick Start For Windows (Recommended):**
 
 ```bash
-# 1. Clone and setup
-git clone https://github.com/harry0703/MoneyPrinterTurbo.git
+# 1. Clone
+git clone https://github.com/Asad-Ismail/MoneyPrinterTurbo-Extended.git
 cd MoneyPrinterTurbo
+
+# 2. One-click setup + launch
+run.bat
+```
+
+The web interface opens at `http://localhost:8501`
+
+**What `run.bat` does**
+
+- detects Python and creates `.venv` automatically
+- installs `requirements.txt` on first run
+- creates `config.toml` from `config.example.toml` if needed
+- applies safe defaults for this PC: `cpu-safe`, `ja`, `ja-JP`, `voice clone off`
+- launches the Streamlit WebUI
+
+**What happens on the second run**
+
+- existing `.venv` is reused
+- dependency install is skipped unless you delete `.venv`
+- your existing `config.toml` is kept and only missing safe defaults are filled
+
+**Manual / advanced setup**
+
+```bash
+# Linux / macOS Web Interface
+./webui.sh
+
+# Optional: conda-based environment
 conda env create -f environment.yml
 conda activate MoneyPrinterTurbo
-
-# 2. CPU-only install (recommended for first run)
 pip install -r requirements.txt
 
-# 3. Optional: Install Chatterbox only when you want local TTS experimentation
+# Existing environments: refresh edge_tts after pulling changes
+pip install -U edge_tts==7.2.8
+
+# Optional: Install Chatterbox only when you want local TTS experimentation
 git clone https://github.com/resemble-ai/chatterbox.git
 cd chatterbox && pip install -e . && cd ..
 
-## Optional: CUDA/GPU setup
+# Optional: CUDA / GPU setup
 pip install -r requirements-cuda.txt
-source ./setup_cuda_env.sh    
-```
+source ./setup_cuda_env.sh
 
-**Usage:**
-```bash
-# Web Interface (Recommended)
-./webui.sh            
-
-## Optional: Customize speech speed when using chatter box
+# Optional: Customize speech speed when using Chatterbox
 export CHATTERBOX_CFG_WEIGHT=0.1  # Very slow
 export CHATTERBOX_CFG_WEIGHT=0.2  # Slow (default)
 export CHATTERBOX_CFG_WEIGHT=0.3  # Normal speed
 ```
 
-The web interface opens at `http://localhost:8501`
+**Windows helpers**
+
+- `run.bat`: recommended entrypoint for setup + launch
+- `webui.bat`: compatibility launcher, now delegates to `run.bat`
+
+If you need a proxy for outbound services, add it to the `[proxy]` section in `config.toml`.
+The same proxy settings are used for Pexels/Pixabay requests and `azure-tts-v1` (`edge_tts`).
 
 ## New Runtime Basics
 
@@ -139,6 +168,14 @@ The web interface opens at `http://localhost:8501`
 - Save your current UI setup as a **profile** to reuse the same settings later
 - Default mode is `cpu-safe`, which keeps Chatterbox and voice cloning off unless you explicitly enable higher-load settings
 - LLM providers now support `OpenAI`, `Groq`, and `OpenRouter` through the same UI fields
+
+## Japanese Quickstart
+
+- Set the UI language to `ja` and the script language to `ja-JP` for Japanese-first generation
+- In Japanese mode, the app defaults to `ja-JP-NanamiNeural` when your saved voice is still the old English default
+- Subtitle density checks become stricter for Japanese so long lines are flagged earlier
+- `Groq` and `OpenRouter` work for Japanese script generation through the same LLM settings panel
+- Keep `cpu-safe` enabled for the first run; voice cloning remains optional and off by default
 
 ## 🔧 Troubleshooting
 
@@ -164,9 +201,13 @@ The web interface opens at `http://localhost:8501`
 - **Solution**: Remove or comment out `align` parameter in `TextClip` calls
 
 **General issues:**
+- If `run.bat` says Python was not found, install Python 3.11+ and retry
+- If the first launch fails during pip install, rerun `run.bat` after fixing your network or proxy settings
 - Check that all dependencies are installed correctly
 - Ensure your Python environment is activated
 - For GPU issues, CPU mode provides a reliable fallback
+- If `azure-tts-v1` fails with `403 Invalid response status`, upgrade `edge_tts` with `pip install -U edge_tts==7.2.8`
+- If your network requires a proxy, set `[proxy].https` or `[proxy].http` in `config.toml`
 
 **Advanced CUDA Setup:**
 The project includes automatic CUDA environment configuration:

@@ -22,7 +22,7 @@ class TestConfigRuntime(unittest.TestCase):
         normalized = config.normalize_config_dict(raw)
         self.assertEqual(normalized["llm"]["provider"], "groq")
         self.assertEqual(normalized["performance"]["compute_profile"], "cpu-safe")
-        self.assertEqual(normalized["ui"]["tts_server"], "azure-tts-v1")
+        self.assertEqual(normalized["ui"]["tts_server"], config.default_tts_server_for_platform())
         self.assertIn("quality", normalized)
 
     def test_provider_config_reads_env_override(self):
@@ -40,6 +40,30 @@ class TestConfigRuntime(unittest.TestCase):
                 os.environ.pop("TEST_GROQ_KEY", None)
             else:
                 os.environ["TEST_GROQ_KEY"] = previous
+
+    def test_japanese_defaults_are_applied_from_locale(self):
+        normalized = config.normalize_config_dict(
+            {
+                "ui": {"language": "ja", "voice_name": ""},
+                "project": {"preset_id": "youtube-explainer", "video_language": ""},
+            }
+        )
+        self.assertEqual(normalized["project"]["video_language"], "ja-JP")
+        self.assertEqual(normalized["ui"]["voice_name"], "ja-JP-NanamiNeural-Female")
+        self.assertEqual(normalized["style"]["max_chars_per_line"], 26)
+        self.assertEqual(normalized["quality"]["max_subtitle_chars_per_line"], 26)
+
+    def test_windows_cpu_safe_prefers_builtin_tts_without_azure_credentials(self):
+        normalized = config.normalize_config_dict(
+            {
+                "ui": {"tts_server": "azure-tts-v1", "voice_name": "ja-JP-NanamiNeural-Female"},
+                "performance": {"compute_profile": "cpu-safe"},
+                "azure": {"speech_key": "", "speech_region": ""},
+            }
+        )
+        expected = "windows-sapi" if os.name == "nt" else "azure-tts-v1"
+        self.assertEqual(normalized["ui"]["tts_server"], expected)
+        self.assertEqual(normalized["style"]["tts_server"], expected)
 
 
 if __name__ == "__main__":

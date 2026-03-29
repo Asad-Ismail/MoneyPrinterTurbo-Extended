@@ -12,6 +12,7 @@ from app.services import quality
 class DummyParams:
     voice_volume = 1.0
     bgm_volume = 0.5
+    video_language = ""
 
 
 class TestQualityChecks(unittest.TestCase):
@@ -34,6 +35,30 @@ class TestQualityChecks(unittest.TestCase):
             self.assertIn("checks", report)
             self.assertTrue(any(item["name"] == "audio_subtitle_delta" for item in report["checks"]))
             self.assertTrue(any(item["name"] == "material_duplication" for item in report["checks"]))
+
+    def test_japanese_subtitle_density_uses_stricter_limit(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            subtitle_path = os.path.join(tmp_dir, "ja.srt")
+            with open(subtitle_path, "w", encoding="utf-8") as f:
+                f.write(
+                    "1\n00:00:00,000 --> 00:00:02,000\nこれは日本語字幕の一行としては少し長めに作ってあるサンプルです\n"
+                )
+
+            params = DummyParams()
+            params.video_language = "ja-JP"
+            report = quality.run_quality_checks(
+                task_id="unit-test-quality-ja",
+                params=params,
+                audio_duration=2.0,
+                subtitle_path=subtitle_path,
+                materials=["a.mp4"],
+                video_script="通常の説明文です。",
+            )
+            subtitle_check = next(
+                item for item in report["checks"] if item["name"] == "subtitle_density"
+            )
+            self.assertEqual(subtitle_check["allowed_chars"], 26)
+            self.assertEqual(subtitle_check["level"], "warning")
 
 
 if __name__ == "__main__":

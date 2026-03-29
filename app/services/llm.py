@@ -226,29 +226,11 @@ def _generate_response(prompt: str, provider: str | None = None) -> str:
 
 
 def generate_script(video_subject: str, language: str = "", paragraph_number: int = 1) -> str:
-    prompt = f"""
-# Role: Video Script Generator
-
-## Goals:
-Generate a script for a video, depending on the subject of the video.
-
-## Constrains:
-1. the script is to be returned as a string with the specified number of paragraphs.
-2. do not under any circumstance reference this prompt in your response.
-3. get straight to the point, don't start with unnecessary things like, "welcome to this video".
-4. you must not include any type of markdown or formatting in the script, never use a title.
-5. only return the raw content of the script.
-6. do not include "voiceover", "narrator" or similar indicators of what should be spoken at the beginning of each paragraph or line.
-7. you must not mention the prompt, or anything about the script itself. also, never talk about the amount of paragraphs or lines. just write the script.
-8. respond in the same language as the video subject.
-
-# Initialization:
-- video subject: {video_subject}
-- number of paragraphs: {paragraph_number}
-""".strip()
-    if language:
-        prompt += f"\n- language: {language}"
-
+    prompt = _build_script_prompt(
+        video_subject=video_subject,
+        language=language,
+        paragraph_number=paragraph_number,
+    )
     final_script = ""
     logger.info(f"subject: {video_subject}")
 
@@ -278,6 +260,49 @@ Generate a script for a video, depending on the subject of the video.
     else:
         logger.success(f"completed: \n{final_script}")
     return final_script.strip()
+
+
+def _is_japanese_language(language: str = "") -> bool:
+    normalized = (language or "").strip().lower().replace("_", "-")
+    return normalized == "ja" or normalized.startswith("ja-")
+
+
+def _build_script_prompt(
+    video_subject: str, language: str = "", paragraph_number: int = 1
+) -> str:
+    prompt = f"""
+# Role: Video Script Generator
+
+## Goals:
+Generate a script for a video, depending on the subject of the video.
+
+## Constrains:
+1. the script is to be returned as a string with the specified number of paragraphs.
+2. do not under any circumstance reference this prompt in your response.
+3. get straight to the point, don't start with unnecessary things like, "welcome to this video".
+4. you must not include any type of markdown or formatting in the script, never use a title.
+5. only return the raw content of the script.
+6. do not include "voiceover", "narrator" or similar indicators of what should be spoken at the beginning of each paragraph or line.
+7. you must not mention the prompt, or anything about the script itself. also, never talk about the amount of paragraphs or lines. just write the script.
+8. respond in the same language as the video subject.
+
+# Initialization:
+- video subject: {video_subject}
+- number of paragraphs: {paragraph_number}
+""".strip()
+    if language:
+        prompt += f"\n- language: {language}"
+    if _is_japanese_language(language):
+        prompt += """
+
+## Japanese Output Rules:
+9. write in natural spoken Japanese for narration, not a literal translation.
+10. keep sentences short and clear so they are easy to subtitle.
+11. prefer one idea per sentence and avoid overly formal or repetitive phrasing.
+12. use Japanese punctuation such as 。 and 、 when it improves readability.
+13. avoid unnecessary English words unless they are proper nouns or common loanwords.
+""".rstrip()
+    return prompt
 
 
 def generate_terms(video_subject: str, video_script: str, amount: int = 5) -> List[str]:

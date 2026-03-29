@@ -19,6 +19,16 @@ class TestLlmService(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("api_key", result["missing"])
 
+    def test_japanese_script_prompt_adds_language_rules(self):
+        prompt = llm._build_script_prompt(
+            video_subject="日本の物価上昇",
+            language="ja-JP",
+            paragraph_number=2,
+        )
+        self.assertIn("language: ja-JP", prompt)
+        self.assertIn("natural spoken Japanese", prompt)
+        self.assertIn("easy to subtitle", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

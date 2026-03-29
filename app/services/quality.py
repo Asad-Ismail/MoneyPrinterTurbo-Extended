@@ -56,9 +56,23 @@ def _check_audio_subtitle_delta(audio_duration: float, subtitle_entries: list[di
     }
 
 
-def _check_subtitle_density(subtitle_entries: list[dict[str, Any]]) -> dict[str, Any]:
+def _is_japanese_language(language: str = "") -> bool:
+    normalized = (language or "").strip().lower().replace("_", "-")
+    return normalized == "ja" or normalized.startswith("ja-")
+
+
+def _resolve_subtitle_limits(video_language: str = "") -> tuple[int, int]:
     max_chars = config.quality.get("max_subtitle_chars_per_line", 40)
     max_lines = config.quality.get("max_subtitle_lines", 2)
+    if _is_japanese_language(video_language):
+        max_chars = min(max_chars, 26)
+    return max_chars, max_lines
+
+
+def _check_subtitle_density(
+    subtitle_entries: list[dict[str, Any]], video_language: str = ""
+) -> dict[str, Any]:
+    max_chars, max_lines = _resolve_subtitle_limits(video_language)
     worst_chars = 0
     worst_lines = 0
     for entry in subtitle_entries:
@@ -78,7 +92,8 @@ def _check_subtitle_density(subtitle_entries: list[dict[str, Any]]) -> dict[str,
         "max_lines": worst_lines,
         "allowed_chars": max_chars,
         "allowed_lines": max_lines,
-        "message": f"字幕の最大行数は {worst_lines}、最大文字数は {worst_chars} です。",
+        "message": f"字幕の最大行数は {worst_lines}、最大文字数は {worst_chars} です。"
+        + (" 日本語では短めの字幕を推奨します。" if _is_japanese_language(video_language) else ""),
     }
 
 
@@ -130,9 +145,10 @@ def _check_ng_words(video_script: str) -> dict[str, Any]:
 
 def run_quality_checks(task_id: str, params, audio_duration: float, subtitle_path: str, materials: list[str], video_script: str) -> dict[str, Any]:
     entries = _parse_srt_entries(subtitle_path)
+    video_language = getattr(params, "video_language", "") or config.project.get("video_language", "")
     checks = [
         _check_audio_subtitle_delta(audio_duration, entries),
-        _check_subtitle_density(entries),
+        _check_subtitle_density(entries, video_language),
         _check_audio_mix(getattr(params, "voice_volume", 1.0), getattr(params, "bgm_volume", 0.2)),
         _check_material_duplication(materials or []),
         _check_ng_words(video_script),

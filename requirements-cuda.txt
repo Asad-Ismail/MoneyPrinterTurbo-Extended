@@ -31,7 +31,7 @@ sentence-transformers>=2.2.0
 scikit-learn>=1.3.0
 
 # TTS Integration
-edge_tts==6.1.19
+edge_tts==7.2.8
 faster-whisper==1.1.0
 
 # Note: After installing these packages, run:

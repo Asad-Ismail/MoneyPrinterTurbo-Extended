@@ -58,19 +58,114 @@ config_file = os.path.join(root_dir, "webui", ".streamlit", "webui.toml")
 system_locale = utils.get_system_locale()
 
 
+def normalize_ui_language_code(language_code: str) -> str:
+    normalized = (language_code or "").strip().replace("_", "-").lower()
+    aliases = {
+        "zh-cn": "zh",
+        "zh-hk": "zh",
+        "zh-tw": "zh",
+        "en-us": "en",
+        "en-gb": "en",
+        "de-de": "de",
+        "pt-br": "pt",
+        "vi-vn": "vi",
+        "ja-jp": "ja",
+    }
+    if normalized in aliases:
+        return aliases[normalized]
+    if normalized:
+        return normalized.split("-")[0]
+    return "en"
+
+
+LEGACY_REPLACEABLE_VOICES = {"", "en-AU-NatashaNeural-Female"}
+DEFAULT_JAPANESE_UI_LANGUAGE = "ja"
+DEFAULT_JAPANESE_VIDEO_LANGUAGE = "ja-JP"
+DEFAULT_JAPANESE_VOICE_NAME = "ja-JP-NanamiNeural-Female"
+
+
+def is_japanese_language(language_code: str) -> bool:
+    normalized = (language_code or "").strip().lower().replace("_", "-")
+    return normalized == "ja" or normalized.startswith("ja-")
+
+
+def default_video_language_for_ui(language_code: str) -> str:
+    if is_japanese_language(language_code):
+        return DEFAULT_JAPANESE_VIDEO_LANGUAGE
+    return ""
+
+
+def default_voice_name_for_languages(ui_language: str, video_language: str) -> str:
+    if is_japanese_language(ui_language) or is_japanese_language(video_language):
+        return DEFAULT_JAPANESE_VOICE_NAME
+    return ""
+
+
+def is_edge_tts_outdated() -> bool:
+    checker = getattr(voice, "is_edge_tts_outdated", None)
+    if callable(checker):
+        return bool(checker())
+    return False
+
+
+def get_edge_tts_version() -> str:
+    getter = getattr(voice, "get_edge_tts_version", None)
+    if callable(getter):
+        return str(getter())
+    return "unknown"
+
+
+def get_last_tts_error() -> str:
+    getter = getattr(voice, "get_last_tts_error", None)
+    if callable(getter):
+        return str(getter())
+    return ""
+
+
+def get_voice_locale_candidates(video_language: str, ui_language: str) -> list[str]:
+    candidates = []
+    for item in [video_language, ui_language]:
+        normalized = (item or "").strip().lower().replace("_", "-")
+        if not normalized:
+            continue
+        for candidate in [normalized, normalized.split("-")[0]]:
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+    return candidates
+
+
 if "video_subject" not in st.session_state:
     st.session_state["video_subject"] = ""
 if "video_script" not in st.session_state:
     st.session_state["video_script"] = ""
 if "video_terms" not in st.session_state:
     st.session_state["video_terms"] = ""
-if "ui_language" not in st.session_state:
-    st.session_state["ui_language"] = config.ui.get("language", system_locale)
 if "profile_name_input" not in st.session_state:
     st.session_state["profile_name_input"] = config.project.get("profile_name", "default")
 
 # 加载语言文件
 locales = utils.load_locales(i18n_dir)
+initial_ui_language = normalize_ui_language_code(config.ui.get("language", system_locale))
+if (
+    normalize_ui_language_code(system_locale) == "ja"
+    and initial_ui_language == "en"
+    and config.ui.get("voice_name", "").strip() in LEGACY_REPLACEABLE_VOICES
+    and not config.project.get("video_language", "")
+):
+    config.ui["language"] = DEFAULT_JAPANESE_UI_LANGUAGE
+    config.project["video_language"] = default_video_language_for_ui(
+        DEFAULT_JAPANESE_UI_LANGUAGE
+    )
+    config.ui["voice_name"] = default_voice_name_for_languages(
+        DEFAULT_JAPANESE_UI_LANGUAGE,
+        config.project.get("video_language", ""),
+    )
+    initial_ui_language = DEFAULT_JAPANESE_UI_LANGUAGE
+if "ui_language" not in st.session_state:
+    st.session_state["ui_language"] = initial_ui_language
+st.session_state["ui_language"] = normalize_ui_language_code(
+    st.session_state.get("ui_language", initial_ui_language)
+)
 
 # 创建一个顶部栏，包含标题和语言选择
 title_col, lang_col = st.columns([3, 1])
@@ -83,7 +178,7 @@ with lang_col:
     selected_index = 0
     for i, code in enumerate(locales.keys()):
         display_languages.append(f"{code} - {locales[code].get('Language')}")
-        if code == st.session_state.get("ui_language", ""):
+        if code == normalize_ui_language_code(st.session_state.get("ui_language", "")):
             selected_index = i
 
     selected_language = st.selectbox(
@@ -94,11 +189,12 @@ with lang_col:
         label_visibility="collapsed",
     )
     if selected_language:
-        code = selected_language.split(" - ")[0].strip()
+        code = normalize_ui_language_code(selected_language.split(" - ")[0].strip())
         st.session_state["ui_language"] = code
         config.ui["language"] = code
 
 support_locales = [
+    "ja-JP",
     "zh-CN",
     "zh-HK",
     "zh-TW",
@@ -197,8 +293,14 @@ locales = utils.load_locales(i18n_dir)
 
 
 def tr(key):
-    loc = locales.get(st.session_state["ui_language"], {})
-    return loc.get("Translation", {}).get(key, key)
+    ui_language = normalize_ui_language_code(st.session_state.get("ui_language", "en"))
+    loc = locales.get(ui_language, {})
+    en_loc = locales.get("en", {})
+    return (
+        loc.get("Translation", {}).get(key)
+        or en_loc.get("Translation", {}).get(key)
+        or key
+    )
 
 
 # 创建基础设置折叠框
@@ -231,7 +333,7 @@ if not config.app.get("hide_config", False):
                 0,
             )
             preset_label = st.selectbox(
-                "Preset",
+                tr("Preset"),
                 options=preset_labels,
                 index=selected_preset_index,
                 key="preset_selector",
@@ -242,7 +344,7 @@ if not config.app.get("hide_config", False):
             run_mode_options = ["stable", "fast-preview", "final"]
             saved_run_mode = config.performance.get("run_mode", "stable")
             config.performance["run_mode"] = st.selectbox(
-                "Run Mode",
+                tr("Run Mode"),
                 options=run_mode_options,
                 index=run_mode_options.index(saved_run_mode) if saved_run_mode in run_mode_options else 0,
             )
@@ -250,17 +352,17 @@ if not config.app.get("hide_config", False):
             compute_options = ["cpu-safe", "gpu-standard"]
             saved_compute_profile = config.performance.get("compute_profile", "cpu-safe")
             config.performance["compute_profile"] = st.selectbox(
-                "Compute Profile",
+                tr("Compute Profile"),
                 options=compute_options,
                 index=compute_options.index(saved_compute_profile) if saved_compute_profile in compute_options else 0,
             )
             config.performance["enable_chatterbox"] = st.checkbox(
-                "Enable Chatterbox TTS",
+                tr("Enable Chatterbox TTS"),
                 value=config.performance.get("enable_chatterbox", False),
                 disabled=config.performance["compute_profile"] == "cpu-safe",
             )
             config.performance["allow_voice_clone"] = st.checkbox(
-                "Allow Voice Clone",
+                tr("Allow Voice Clone"),
                 value=config.performance.get("allow_voice_clone", False),
                 disabled=config.performance["compute_profile"] == "cpu-safe" or not config.performance["enable_chatterbox"],
             )
@@ -268,43 +370,49 @@ if not config.app.get("hide_config", False):
             resume_options = ["auto", "script", "audio", "subtitle", "assets", "compose", "quality_check"]
             saved_resume_from = config.pipeline.get("resume_from", "auto")
             config.pipeline["resume_from"] = st.selectbox(
-                "Resume From",
+                tr("Resume From"),
                 options=resume_options,
                 index=resume_options.index(saved_resume_from) if saved_resume_from in resume_options else 0,
             )
             config.pipeline["cache_enabled"] = st.checkbox(
-                "Cache Intermediate Files",
+                tr("Cache Intermediate Files"),
                 value=config.pipeline.get("cache_enabled", True),
             )
             config.pipeline["reuse_intermediate"] = st.checkbox(
-                "Reuse Existing Stage Outputs",
+                tr("Reuse Existing Stage Outputs"),
                 value=config.pipeline.get("reuse_intermediate", True),
             )
 
             profile_names = config.list_profiles()
             profile_name_input = st.text_input(
-                "Profile Name",
+                tr("Profile Name"),
                 value=st.session_state.get("profile_name_input", config.project.get("profile_name", "default")),
                 key="profile_name_input_box",
             ).strip()
             st.session_state["profile_name_input"] = profile_name_input or "default"
             selected_profile = st.selectbox(
-                "Saved Profiles",
+                tr("Saved Profiles"),
                 options=[""] + profile_names,
                 index=0,
                 key="saved_profiles_selector",
             )
             profile_button_cols = st.columns(3)
-            if profile_button_cols[0].button("Apply Preset", use_container_width=True):
+            if profile_button_cols[0].button(tr("Apply Preset"), use_container_width=True):
                 config.apply_preset(selected_preset_id)
+                st.session_state["ui_language"] = normalize_ui_language_code(
+                    config.ui.get("language", st.session_state.get("ui_language", "en"))
+                )
                 st.rerun()
-            if profile_button_cols[1].button("Save Profile", use_container_width=True):
+            if profile_button_cols[1].button(tr("Save Profile"), use_container_width=True):
                 config.project["profile_name"] = st.session_state["profile_name_input"]
                 config.save_profile(st.session_state["profile_name_input"])
                 config.save_config()
                 st.success(f"Saved profile: {st.session_state['profile_name_input']}")
-            if profile_button_cols[2].button("Load Profile", use_container_width=True, disabled=not selected_profile):
+            if profile_button_cols[2].button(tr("Load Profile"), use_container_width=True, disabled=not selected_profile):
                 config.apply_profile(selected_profile)
+                st.session_state["ui_language"] = normalize_ui_language_code(
+                    config.ui.get("language", st.session_state.get("ui_language", "en"))
+                )
                 st.rerun()
 
         # 中间面板 - LLM 设置
@@ -604,9 +712,17 @@ with left_panel:
         for code in support_locales:
             video_languages.append((code, code))
 
+        saved_video_language = config.project.get(
+            "video_language",
+            default_video_language_for_ui(st.session_state.get("ui_language", ""))
+        )
+        saved_video_language_index = next(
+            (i for i, item in enumerate(video_languages) if item[1] == saved_video_language),
+            0,
+        )
         selected_index = st.selectbox(
             tr("Script Language"),
-            index=0,
+            index=saved_video_language_index,
             options=range(
                 len(video_languages)
             ),  # Use the index as the internal option value
@@ -615,6 +731,9 @@ with left_panel:
             ],  # The label is displayed to the user
         )
         params.video_language = video_languages[selected_index][1]
+        config.project["video_language"] = params.video_language
+        if is_japanese_language(params.video_language):
+            st.info("日本語では句読点を意識した台本生成と短めの字幕設定を優先します。")
 
         if st.button(
             tr("Generate Video Script and Keywords"), key="auto_generate_script"
@@ -968,6 +1087,8 @@ with middle_panel:
             ("azure-tts-v2", "Azure TTS V2"),
             ("siliconflow", "SiliconFlow TTS"),
         ]
+        if os.name == "nt":
+            tts_servers.insert(1, ("windows-sapi", "Windows Built-in TTS"))
         if config.performance.get("enable_chatterbox", False) and config.performance.get("compute_profile") != "cpu-safe":
             tts_servers.append(("chatterbox", "Chatterbox TTS (Open Source)"))
         else:
@@ -991,11 +1112,20 @@ with middle_panel:
         selected_tts_server = tts_servers[selected_tts_server_index][0]
         config.ui["tts_server"] = selected_tts_server
         config.style["tts_server"] = selected_tts_server
+        if selected_tts_server == "azure-tts-v1" and is_edge_tts_outdated():
+            st.warning(
+                f"Edge TTS {get_edge_tts_version()} は古い可能性があります。"
+                " 音声再生に失敗する場合は edge_tts を最新版へ更新してください。"
+            )
+        if selected_tts_server == "azure-tts-v1" and os.name == "nt":
+            st.info("Edge TTS が 403 を返した場合は、Windows Built-in TTS へ自動フォールバックします。")
 
         # 根据选择的TTS服务器获取声音列表
         filtered_voices = []
 
-        if selected_tts_server == "siliconflow":
+        if selected_tts_server == "windows-sapi":
+            filtered_voices = voice.get_windows_sapi_voices()
+        elif selected_tts_server == "siliconflow":
             # 获取硅基流动的声音列表
             filtered_voices = voice.get_siliconflow_voices()
         elif selected_tts_server == "chatterbox":
@@ -1032,11 +1162,40 @@ with middle_panel:
         if saved_voice_name in friendly_names:
             saved_voice_name_index = list(friendly_names.keys()).index(saved_voice_name)
         else:
-            # 如果不在，则根据当前UI语言选择一个默认声音
-            for i, v in enumerate(filtered_voices):
-                if v.lower().startswith(st.session_state["ui_language"].lower()):
-                    saved_voice_name_index = i
-                    break
+            preferred_voice_name = default_voice_name_for_languages(
+                st.session_state.get("ui_language", ""),
+                params.video_language,
+            )
+            if preferred_voice_name in friendly_names:
+                saved_voice_name_index = list(friendly_names.keys()).index(
+                    preferred_voice_name
+                )
+            else:
+                matched_voice = False
+                if selected_tts_server == "windows-sapi":
+                    preferred_keyword = ""
+                    if str(params.video_language).lower().startswith("ja"):
+                        preferred_keyword = "Japanese"
+                    elif str(params.video_language).lower().startswith("en"):
+                        preferred_keyword = "English"
+                    elif str(params.video_language).lower().startswith("zh"):
+                        preferred_keyword = "Chinese"
+                    if preferred_keyword:
+                        for i, v in enumerate(filtered_voices):
+                            if preferred_keyword.lower() in v.lower():
+                                saved_voice_name_index = i
+                                matched_voice = True
+                                break
+                for locale_candidate in get_voice_locale_candidates(
+                    params.video_language, st.session_state.get("ui_language", "")
+                ):
+                    for i, v in enumerate(filtered_voices):
+                        if v.lower().startswith(locale_candidate):
+                            saved_voice_name_index = i
+                            matched_voice = True
+                            break
+                    if matched_voice:
+                        break
 
         # 如果没有找到匹配的声音，使用第一个声音
         if saved_voice_name_index >= len(friendly_names) and friendly_names:
@@ -1134,10 +1293,18 @@ with middle_panel:
                         voice_volume=params.voice_volume,
                     )
 
-                if sub_maker and os.path.exists(audio_file):
-                    st.audio(audio_file, format="audio/mp3")
-                    if os.path.exists(audio_file):
+                actual_audio_file = getattr(sub_maker, "_actual_audio_file", audio_file) if sub_maker else audio_file
+                if sub_maker and os.path.exists(actual_audio_file):
+                    audio_format = "audio/wav" if actual_audio_file.lower().endswith(".wav") else "audio/mp3"
+                    st.audio(actual_audio_file, format=audio_format)
+                    if os.path.exists(actual_audio_file):
+                        os.remove(actual_audio_file)
+                    if actual_audio_file != audio_file and os.path.exists(audio_file):
                         os.remove(audio_file)
+                else:
+                    tts_error = get_last_tts_error()
+                    if tts_error:
+                        st.error(tts_error)
 
         # 当选择V2版本或者声音是V2声音时，显示服务区域和API key输入框
         if selected_tts_server == "azure-tts-v2" or (
@@ -1339,6 +1506,7 @@ start_button = st.button(tr("Generate Video"), use_container_width=True, type="p
 if start_button:
     config.project["preset_id"] = params.preset_id
     config.project["profile_name"] = params.profile_name
+    config.project["video_language"] = params.video_language
     config.style["max_chars_per_line"] = params.max_chars_per_line
     config.style["max_lines_per_subtitle"] = params.max_lines_per_subtitle
     config.style["font_name"] = params.font_name

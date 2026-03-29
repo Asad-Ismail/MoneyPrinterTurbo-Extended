@@ -4,6 +4,7 @@ preset_id = "youtube-explainer"
 profile_name = "default"
 video_source = "pexels"
 video_aspect = "16:9"
+video_language = ""
 
 [llm]
 # Unified LLM runtime config. Legacy provider-specific keys below are still supported.
@@ -288,3 +289,13 @@ api_key = ""
 # 是否隐藏日志信息
 # Whether to hide logs in the UI
 hide_log = false
+language = "en"
+tts_server = "azure-tts-v1"
+voice_name = ""
+font_name = "MicrosoftYaHeiBold.ttc"
+text_fore_color = "#FFFFFF"
+font_size = 60
+enable_word_highlighting = false
+highlight_color = "#ff0000"
+max_chars_per_line = 40
+max_lines_per_subtitle = 2
