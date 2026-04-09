@@ -6,6 +6,7 @@ from urllib.parse import urlencode
 
 import requests
 from loguru import logger
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from moviepy.video.io.VideoFileClip import VideoFileClip
 
 from app.config import config
@@ -35,6 +36,12 @@ def get_api_key(cfg_key: str):
         return api_keys[_requested_count % len(api_keys)]
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type((requests.exceptions.ConnectionError, requests.exceptions.Timeout)),
+    reraise=True,
+)
 def search_videos_pexels(
     search_term: str,
     minimum_duration: int,
@@ -99,6 +106,12 @@ def search_videos_pexels(
     return []
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type((requests.exceptions.ConnectionError, requests.exceptions.Timeout)),
+    reraise=True,
+)
 def search_videos_pixabay(
     search_term: str,
     minimum_duration: int,
@@ -155,6 +168,22 @@ def search_videos_pixabay(
     return []
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type((requests.exceptions.ConnectionError, requests.exceptions.Timeout)),
+    reraise=True,
+)
+def _download_video_content(video_url: str, headers: dict) -> bytes:
+    """Download video content with retry on transient network errors."""
+    return requests.get(
+        video_url,
+        headers=headers,
+        proxies=config.proxy,
+        timeout=(60, 240),
+    ).content
+
+
 def save_video(video_url: str, save_dir: str = "", search_term: str = "", thumbnail_url: str = "", preview_images: list = None) -> str:
     if not save_dir:
         save_dir = utils.storage_dir("cache_videos")
@@ -186,14 +215,7 @@ def save_video(video_url: str, save_dir: str = "", search_term: str = "", thumbn
 
     # if video does not exist, download it
     with open(video_path, "wb") as f:
-        f.write(
-            requests.get(
-                video_url,
-                headers=headers,
-                proxies=config.proxy,
-                timeout=(60, 240),
-            ).content
-        )
+        f.write(_download_video_content(video_url, headers))
 
     if os.path.exists(video_path) and os.path.getsize(video_path) > 0:
         try:
