@@ -1,5 +1,10 @@
 [app]
-video_source = "pexels" # "pexels" or "pixabay"
+video_source = "pexels" # "pexels", "pixabay", "local", or "ai_generated"
+
+# AI video generation model (only used when video_source = "ai_generated")
+# "wan2.1-1.3b" - 480p, ~8GB VRAM, runs on RTX 3060+
+# "wan2.2-5b"   - 720p, ~24GB VRAM, runs on RTX 4090
+video_gen_model = "wan2.1-1.3b"
 
 # 是否隐藏配置面板
 hide_config = false
