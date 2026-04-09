@@ -238,6 +238,8 @@ if not config.app.get("hide_config", False):
                 "Cloudflare",
                 "ERNIE",
                 "Pollinations",
+                "Groq",
+                "Cerebras",
             ]
             saved_llm_provider = config.app.get("llm_provider", "OpenAI").lower()
             saved_llm_provider_index = 0
@@ -391,6 +393,34 @@ if not config.app.get("hide_config", False):
                             - **API Key**: Optional - Leave empty for public access
                             - **Base Url**: Default is https://text.pollinations.ai/openai
                             - **Model Name**: Use 'openai-fast' or specify a model name
+                            """
+
+            if llm_provider == "groq":
+                if not llm_model_name:
+                    llm_model_name = "llama-3.3-70b-versatile"
+                if not llm_base_url:
+                    llm_base_url = "https://api.groq.com/openai/v1"
+                with llm_helper:
+                    tips = """
+                            ##### Groq Configuration
+                            > Free tier: 14,400 requests/day
+                            - **API Key**: [Get your key at console.groq.com](https://console.groq.com)
+                            - **Base Url**: Default is https://api.groq.com/openai/v1
+                            - **Model Name**: Default is llama-3.3-70b-versatile
+                            """
+
+            if llm_provider == "cerebras":
+                if not llm_model_name:
+                    llm_model_name = "llama-3.3-70b"
+                if not llm_base_url:
+                    llm_base_url = "https://api.cerebras.ai/v1"
+                with llm_helper:
+                    tips = """
+                            ##### Cerebras Configuration
+                            > Free tier: 1M tokens/day
+                            - **API Key**: [Get your key at cloud.cerebras.ai](https://cloud.cerebras.ai)
+                            - **Base Url**: Default is https://api.cerebras.ai/v1
+                            - **Model Name**: Default is llama-3.3-70b
                             """
 
             if tips and config.ui["language"] == "zh":
