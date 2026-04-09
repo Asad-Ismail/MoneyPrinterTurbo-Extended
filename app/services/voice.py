@@ -1491,10 +1491,14 @@ def kokoro_tts(
         if voice_volume != 1.0:
             full_audio = full_audio * voice_volume
 
-        # Save audio
+        # Save audio — soundfile can't write MP3, so save as WAV
         sample_rate = 24000
-        sf.write(voice_file, full_audio, sample_rate)
-        logger.info(f"Kokoro TTS saved to: {voice_file}")
+        if voice_file.endswith('.mp3'):
+            wav_file = voice_file.replace('.mp3', '.wav')
+        else:
+            wav_file = voice_file
+        sf.write(wav_file, full_audio, sample_rate)
+        logger.info(f"Kokoro TTS saved to: {wav_file}")
 
         # Build SubMaker with word-level timestamps
         # Kokoro generates audio segment by segment (sentence-level).
@@ -1521,6 +1525,10 @@ def kokoro_tts(
                 sub_maker.offset.append((word_start, word_end))
 
             offset_ns += segment_duration_ns
+
+        # Tell task.py the actual audio path (may differ from requested .mp3)
+        if wav_file != voice_file:
+            sub_maker._actual_audio_file = wav_file
 
         logger.info(f"Kokoro TTS completed: {len(sub_maker.subs)} words, "
                      f"{offset_ns / 10_000_000:.1f}s audio")
