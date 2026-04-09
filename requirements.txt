@@ -16,10 +16,10 @@ pyyaml
 requests>=2.31.0
 sentence-transformers>=2.2.0
 scikit-learn>=1.3.0
+# AI video generation (optional, requires CUDA GPU)
+diffusers>=0.32.0
+accelerate>=0.30.0
 # Image similarity dependencies
 transformers>=4.21.0
 torch>=1.12.0
 pillow>=9.0.0
-# AI video generation (optional, requires CUDA GPU)
-diffusers>=0.32.0
-accelerate>=0.30.0
