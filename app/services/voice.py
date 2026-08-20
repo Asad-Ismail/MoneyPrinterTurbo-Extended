@@ -2231,8 +2231,15 @@ def create_subtitle(sub_maker: SubMaker, text: str, subtitle_file: str):
     sub_line = ""
 
     try:
-        for _, (offset, sub) in enumerate(zip(sub_maker.offset, sub_maker.subs)):
-            _start_time, end_time = offset
+        offsets = sub_maker.offset or []
+        subs = sub_maker.subs or []
+        for offset, sub in zip(offsets, subs):
+            if offset is None or sub is None:
+                continue
+            try:
+                _start_time, end_time = offset
+            except (TypeError, ValueError):
+                continue
             if start_time < 0:
                 start_time = _start_time
 
