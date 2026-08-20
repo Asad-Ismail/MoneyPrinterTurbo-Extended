@@ -101,6 +101,21 @@ class TestVoiceService(unittest.TestCase):
 
         self.loop.run_until_complete(_do())
 
+    def test_create_subtitle_skips_none_offsets(self):
+        sub_maker = type("SubMaker", (), {})()
+        sub_maker.offset = [None, (0, 10_000_000)]
+        sub_maker.subs = ["skip", "Hello"]
+        subtitle_file = os.path.join(temp_dir, "tts-none-offset.srt")
+        os.makedirs(temp_dir, exist_ok=True)
+        vs.create_subtitle(sub_maker=sub_maker, text="Hello", subtitle_file=subtitle_file)
+
+    def test_create_subtitle_all_none_offsets_does_not_raise(self):
+        sub_maker = type("SubMaker", (), {})()
+        sub_maker.offset = [None]
+        sub_maker.subs = ["Hello"]
+        subtitle_file = os.path.join(temp_dir, "tts-all-none-offset.srt")
+        vs.create_subtitle(sub_maker=sub_maker, text="Hello", subtitle_file=subtitle_file)
+
 if __name__ == "__main__":
     # python -m unittest test.services.test_voice.TestVoiceService.test_azure_tts_v1
     # python -m unittest test.services.test_voice.TestVoiceService.test_azure_tts_v2
