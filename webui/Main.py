@@ -851,6 +851,7 @@ with middle_panel:
             ("azure-tts-v2", "Azure TTS V2"),
             ("siliconflow", "SiliconFlow TTS"),
             ("chatterbox", "Chatterbox TTS (Open Source)"),
+            ("kokoro", "Kokoro TTS (Open Source)"),
         ]
 
         # 获取保存的TTS服务器，默认为v1
@@ -880,6 +881,8 @@ with middle_panel:
         elif selected_tts_server == "chatterbox":
             # 获取Chatterbox的声音列表
             filtered_voices = voice.get_chatterbox_voices()
+        elif selected_tts_server == "kokoro":
+            filtered_voices = voice.get_kokoro_voices()
         else:
             # 获取Azure的声音列表
             all_voices = voice.get_all_azure_voices(filter_locals=None)

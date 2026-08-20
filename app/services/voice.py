@@ -42,9 +42,22 @@ except ImportError as e:
     CHATTERBOX_AVAILABLE = False
     logger.warning(f"Chatterbox TTS or WhisperX not available: {e}")
 
+# Import Kokoro TTS if available
+try:
+    from kokoro import KPipeline
+    import soundfile as sf
+    KOKORO_AVAILABLE = True
+    logger.info("Kokoro TTS is available")
+except ImportError:
+    KOKORO_AVAILABLE = False
+    logger.warning("Kokoro TTS not available (pip install kokoro soundfile)")
+
 # Global Chatterbox model instance
 chatterbox_model = None
 whisperx_model = None
+
+# Global Kokoro pipeline cache (keyed by lang_code)
+_kokoro_pipelines = {}
 
 
 def ensure_submaker_compatibility(sub_maker):
@@ -105,6 +118,55 @@ def get_chatterbox_voices() -> list[str]:
                 name = os.path.splitext(file)[0]
                 voices.append(f"chatterbox:clone:{name}-Custom")
     
+    return voices
+
+
+def get_kokoro_voices() -> list[str]:
+    if not KOKORO_AVAILABLE:
+        return []
+
+    # Kokoro voices organized by language
+    # Format: kokoro:{lang_code}:{voice_id}-{Gender}
+    voices = [
+        # American English
+        "kokoro:a:af_heart-Female",
+        "kokoro:a:af_star-Female",
+        "kokoro:a:af_bella-Female",
+        "kokoro:a:af_nicole-Female",
+        "kokoro:a:af_sarah-Female",
+        "kokoro:a:af_sky-Female",
+        "kokoro:a:am_adam-Male",
+        "kokoro:a:am_michael-Male",
+        # British English
+        "kokoro:b:bf_emma-Female",
+        "kokoro:b:bf_isabella-Female",
+        "kokoro:b:bm_george-Male",
+        "kokoro:b:bm_lewis-Male",
+        # Japanese
+        "kokoro:j:jf_alpha-Female",
+        "kokoro:j:jf_gongitsune-Female",
+        "kokoro:j:jm_kumo-Male",
+        # Mandarin Chinese
+        "kokoro:z:zf_xiaobei-Female",
+        "kokoro:z:zf_xiaoni-Female",
+        "kokoro:z:zf_xiaoxuan-Female",
+        "kokoro:z:zm_yunjian-Male",
+        "kokoro:z:zm_yunxi-Male",
+        # French
+        "kokoro:f:ff_siwis-Female",
+        # Hindi
+        "kokoro:h:hf_alpha-Female",
+        "kokoro:h:hm_omega-Male",
+        # Italian
+        "kokoro:i:if_sara-Female",
+        "kokoro:i:im_nicola-Male",
+        # Brazilian Portuguese
+        "kokoro:p:pf_dora-Female",
+        "kokoro:p:pm_alex-Male",
+        # Spanish
+        "kokoro:e:ef_dora-Female",
+        "kokoro:e:em_alex-Male",
+    ]
     return voices
 
 
@@ -1148,6 +1210,10 @@ def is_chatterbox_voice(voice_name: str):
     return voice_name.startswith("chatterbox:")
 
 
+def is_kokoro_voice(voice_name: str):
+    return voice_name.startswith("kokoro:")
+
+
 def tts(
     text: str,
     voice_name: str,
@@ -1178,6 +1244,8 @@ def tts(
         # Chatterbox TTS with WhisperX timestamps
         # 格式: chatterbox:type:name-Gender
         return chatterbox_tts(text, voice_name, voice_rate, voice_file, voice_volume)
+    elif is_kokoro_voice(voice_name):
+        return kokoro_tts(text, voice_name, voice_rate, voice_file, voice_volume)
     return azure_tts_v1(text, voice_name, voice_rate, voice_file)
 
 
@@ -1360,6 +1428,117 @@ def siliconflow_tts(
             logger.error(f"siliconflow tts failed: {str(e)}")
 
     return None
+
+
+def kokoro_tts(
+    text: str,
+    voice_name: str,
+    voice_rate: float,
+    voice_file: str,
+    voice_volume: float = 1.0,
+) -> Union[SubMaker, None]:
+    """
+    Generate speech using Kokoro TTS (82M params, Apache 2.0, near-ElevenLabs quality).
+    Voice name format: kokoro:{lang_code}:{voice_id}-{Gender}
+    """
+    if not KOKORO_AVAILABLE:
+        logger.error("Kokoro TTS not available. Install with: pip install kokoro soundfile")
+        return None
+
+    text = text.strip()
+    if not text:
+        logger.error("Text is empty")
+        return None
+
+    # Parse voice_name: kokoro:{lang_code}:{voice_id}-{Gender}
+    parts = voice_name.split(":")
+    if len(parts) < 3:
+        logger.error(f"Invalid Kokoro voice name format: {voice_name}")
+        return None
+
+    lang_code = parts[1]
+    voice_id = parts[2].split("-")[0]  # strip gender suffix
+
+    global _kokoro_pipelines
+
+    try:
+        # Get or create pipeline for this language
+        if lang_code not in _kokoro_pipelines:
+            logger.info(f"Loading Kokoro pipeline for language: {lang_code}")
+            _kokoro_pipelines[lang_code] = KPipeline(lang_code=lang_code)
+
+        pipeline = _kokoro_pipelines[lang_code]
+
+        # Generate audio segments
+        logger.info(f"Generating speech with Kokoro TTS, voice: {voice_id}, lang: {lang_code}")
+        audio_segments = []
+        phoneme_segments = []
+
+        for gs, ps, audio in pipeline(text, voice=voice_id, speed=voice_rate):
+            if audio is not None:
+                audio_segments.append(audio)
+                phoneme_segments.append((gs, ps))
+
+        if not audio_segments:
+            logger.error("Kokoro TTS produced no audio")
+            return None
+
+        # Concatenate all audio segments
+        import numpy as np
+        full_audio = np.concatenate(audio_segments)
+
+        # Apply volume
+        if voice_volume != 1.0:
+            full_audio = full_audio * voice_volume
+
+        # Save audio — soundfile can't write MP3, so save as WAV
+        sample_rate = 24000
+        if voice_file.endswith('.mp3'):
+            wav_file = voice_file.replace('.mp3', '.wav')
+        else:
+            wav_file = voice_file
+        sf.write(wav_file, full_audio, sample_rate)
+        logger.info(f"Kokoro TTS saved to: {wav_file}")
+
+        # Build SubMaker with word-level timestamps
+        # Kokoro generates audio segment by segment (sentence-level).
+        # We estimate word timestamps by distributing evenly within each segment.
+        sub_maker = ensure_submaker_compatibility(SubMaker())
+        offset_ns = 0  # running offset in 100ns units
+        samples_per_100ns = sample_rate / 10_000_000
+
+        for i, audio_seg in enumerate(audio_segments):
+            segment_duration_ns = int(len(audio_seg) / samples_per_100ns)
+            segment_text = phoneme_segments[i][0] if phoneme_segments[i][0] else ""
+
+            # Split segment text into words
+            words = segment_text.split()
+            if not words:
+                offset_ns += segment_duration_ns
+                continue
+
+            word_duration_ns = segment_duration_ns // len(words)
+            for j, word in enumerate(words):
+                word_start = offset_ns + j * word_duration_ns
+                word_end = word_start + word_duration_ns
+                sub_maker.subs.append(word)
+                sub_maker.offset.append((word_start, word_end))
+
+            offset_ns += segment_duration_ns
+
+        # Tell task.py the actual audio path (may differ from requested .mp3)
+        if wav_file != voice_file:
+            sub_maker._actual_audio_file = wav_file
+
+        logger.info(f"Kokoro TTS completed: {len(sub_maker.subs)} words, "
+                     f"{offset_ns / 10_000_000:.1f}s audio")
+        return sub_maker
+
+    except Exception as e:
+        logger.error(f"Kokoro TTS failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
 
 
 def preprocess_text_for_chatterbox(text: str) -> str:
