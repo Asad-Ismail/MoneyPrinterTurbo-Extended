@@ -7,6 +7,7 @@ from urllib.parse import urlencode
 import requests
 from loguru import logger
 from moviepy.video.io.VideoFileClip import VideoFileClip
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.config import config
 from app.models.schema import MaterialInfo, VideoAspect, VideoConcatMode
@@ -35,6 +36,16 @@ def get_api_key(cfg_key: str):
         return api_keys[_requested_count % len(api_keys)]
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type((requests.exceptions.ConnectionError, requests.exceptions.Timeout)),
+    reraise=True,
+)
+def _http_get(url, **kwargs):
+    return requests.get(url, **kwargs)
+
+
 def search_videos_pexels(
     search_term: str,
     minimum_duration: int,
@@ -54,7 +65,7 @@ def search_videos_pexels(
     logger.info(f"searching videos: {query_url}, with proxies: {config.proxy}")
 
     try:
-        r = requests.get(
+        r = _http_get(
             query_url,
             headers=headers,
             proxies=config.proxy,
@@ -120,7 +131,7 @@ def search_videos_pixabay(
     logger.info(f"searching videos: {query_url}, with proxies: {config.proxy}")
 
     try:
-        r = requests.get(
+        r = _http_get(
             query_url, proxies=config.proxy, timeout=(30, 60)
         )
         response = r.json()
@@ -187,7 +198,7 @@ def save_video(video_url: str, save_dir: str = "", search_term: str = "", thumbn
     # if video does not exist, download it
     with open(video_path, "wb") as f:
         f.write(
-            requests.get(
+            _http_get(
                 video_url,
                 headers=headers,
                 proxies=config.proxy,
