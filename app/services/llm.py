@@ -74,6 +74,18 @@ def _generate_response(prompt: str) -> str:
                 base_url = config.app.get("deepseek_base_url")
                 if not base_url:
                     base_url = "https://api.deepseek.com"
+            elif llm_provider == "groq":
+                api_key = config.app.get("groq_api_key")
+                model_name = config.app.get("groq_model_name")
+                base_url = config.app.get("groq_base_url", "")
+                if not base_url:
+                    base_url = "https://api.groq.com/openai/v1"
+            elif llm_provider == "cerebras":
+                api_key = config.app.get("cerebras_api_key")
+                model_name = config.app.get("cerebras_model_name")
+                base_url = config.app.get("cerebras_base_url", "")
+                if not base_url:
+                    base_url = "https://api.cerebras.ai/v1"
             elif llm_provider == "ernie":
                 api_key = config.app.get("ernie_api_key")
                 secret_key = config.app.get("ernie_secret_key")

@@ -30,6 +30,8 @@ pixabay_api_keys = []
 #   oneapi
 #   cloudflare
 #   ernie       (文心一言)
+#   groq        (free tier)
+#   cerebras    (free tier)
 llm_provider = "openai"
 
 ########## Pollinations AI Settings
@@ -98,6 +100,18 @@ qwen_model_name = "qwen-max"
 deepseek_api_key = ""
 deepseek_base_url = "https://api.deepseek.com"
 deepseek_model_name = "deepseek-chat"
+
+########## Groq (free tier: 14,400 requests/day)
+# Get your API key at https://console.groq.com
+groq_api_key = ""
+groq_base_url = "https://api.groq.com/openai/v1"
+groq_model_name = "llama-3.3-70b-versatile"
+
+########## Cerebras (free tier: 1M tokens/day)
+# Get your API key at https://cloud.cerebras.ai
+cerebras_api_key = ""
+cerebras_base_url = "https://api.cerebras.ai/v1"
+cerebras_model_name = "llama-3.3-70b"
 
 # Subtitle Provider, "edge" or "whisper"
 # If empty, the subtitle will not be generated
