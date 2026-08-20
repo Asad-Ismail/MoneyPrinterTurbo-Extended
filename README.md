@@ -103,8 +103,8 @@ REQUIRED DELIVERABLES:
 
 ```bash
 # 1. Clone and setup
-git clone https://github.com/harry0703/MoneyPrinterTurbo.git
-cd MoneyPrinterTurbo
+git clone https://github.com/Asad-Ismail/MoneyPrinterTurbo-Extended.git
+cd MoneyPrinterTurbo-Extended
 conda env create -f environment.yml
 conda activate MoneyPrinterTurbo
 
