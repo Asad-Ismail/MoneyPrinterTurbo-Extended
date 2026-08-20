@@ -545,6 +545,7 @@ with middle_panel:
             (tr("Pexels"), "pexels"),
             (tr("Pixabay"), "pixabay"),
             (tr("Local file"), "local"),
+            ("AI Generated (Wan2.1/2.2)", "ai_generated"),
             (tr("TikTok"), "douyin"),
             (tr("Bilibili"), "bilibili"),
             (tr("Xiaohongshu"), "xiaohongshu"),
@@ -570,6 +571,20 @@ with middle_panel:
                 type=["mp4", "mov", "avi", "flv", "mkv", "jpg", "jpeg", "png"],
                 accept_multiple_files=True,
             )
+
+        if params.video_source == "ai_generated":
+            from app.services import video_gen
+            if not video_gen.is_available():
+                st.warning("Requires CUDA GPU + diffusers. Install: pip install diffusers transformers accelerate")
+            ai_model = st.selectbox(
+                "AI Video Model",
+                options=["wan2.1-1.3b", "wan2.2-5b"],
+                format_func=lambda x: {
+                    "wan2.1-1.3b": "Wan2.1 1.3B (8GB VRAM, 480p)",
+                    "wan2.2-5b": "Wan2.2 5B (24GB VRAM, 720p)",
+                }.get(x, x),
+            )
+            config.app["video_gen_model"] = ai_model
 
         selected_index = st.selectbox(
             tr("Video Concat Mode"),
@@ -1213,7 +1228,7 @@ if start_button:
         scroll_to_bottom()
         st.stop()
 
-    if params.video_source not in ["pexels", "pixabay", "local"]:
+    if params.video_source not in ["pexels", "pixabay", "local", "ai_generated"]:
         st.error(tr("Please Select a Valid Video Source"))
         scroll_to_bottom()
         st.stop()
